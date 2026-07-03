@@ -15,11 +15,18 @@ namespace PocketTtsNativeHost
         public string serverExePath { get; set; }
         public string serverConfigPath { get; set; }
         public string extensionId { get; set; }
+        public string cliExePath { get; set; }
+        public string modelPath { get; set; }
+        public string backend { get; set; }
+        public string text { get; set; }
+        public string voiceRefBase64 { get; set; }
+        public string voiceRefFileName { get; set; }
+        public string family { get; set; }
     }
 
     internal static class Program
     {
-        private const string HostVersion = "1.0.0";
+        private const string HostVersion = "1.1.0";
 
         private static int Main()
         {
@@ -56,6 +63,12 @@ namespace PocketTtsNativeHost
                 if (command == "verifyRegistration")
                 {
                     WriteResponse(VerifyRegistration(request.extensionId));
+                    return 0;
+                }
+
+                if (command == "synthReferenceSpeech")
+                {
+                    WriteResponse(SynthesizeReferenceSpeech(request));
                     return 0;
                 }
 
@@ -221,6 +234,145 @@ namespace PocketTtsNativeHost
                 }
 
                 return result;
+            }
+        }
+
+        private static Dictionary<string, object> SynthesizeReferenceSpeech(NativeRequest request)
+        {
+            var cliExePath = request.cliExePath;
+            if (string.IsNullOrWhiteSpace(cliExePath) || !File.Exists(cliExePath))
+            {
+                return Response(false, string.Format("CLI executable not found: {0}", cliExePath));
+            }
+
+            var modelPath = request.modelPath;
+            if (string.IsNullOrWhiteSpace(modelPath) || !Directory.Exists(modelPath))
+            {
+                return Response(false, string.Format("Pocket model path not found: {0}", modelPath));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.text))
+            {
+                return Response(false, "Text is required.");
+            }
+
+            if (string.IsNullOrWhiteSpace(request.voiceRefBase64))
+            {
+                return Response(false, "Reference voice WAV is required.");
+            }
+
+            var backend = string.IsNullOrWhiteSpace(request.backend) ? "cuda" : request.backend.Trim();
+            var family = string.IsNullOrWhiteSpace(request.family) ? "pocket_tts" : request.family.Trim();
+            var tempRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PocketTTSEngine", "tmp");
+            Directory.CreateDirectory(tempRoot);
+
+            var requestId = Guid.NewGuid().ToString("N");
+            var voiceRefName = SanitizeFileName(string.IsNullOrWhiteSpace(request.voiceRefFileName) ? "reference.wav" : request.voiceRefFileName.Trim());
+            var voiceRefPath = Path.Combine(tempRoot, requestId + "-" + voiceRefName);
+            var outputPath = Path.Combine(tempRoot, requestId + "-tts.wav");
+
+            try
+            {
+                File.WriteAllBytes(voiceRefPath, Convert.FromBase64String(request.voiceRefBase64));
+
+                var startInfo = new ProcessStartInfo();
+                startInfo.FileName = cliExePath;
+                startInfo.Arguments = string.Format(
+                    "--task tts --family {0} --model \"{1}\" --backend {2} --text \"{3}\" --voice-ref \"{4}\" --out \"{5}\"",
+                    family,
+                    modelPath,
+                    backend,
+                    EscapeArgument(request.text),
+                    voiceRefPath,
+                    outputPath
+                );
+                startInfo.WorkingDirectory = Path.GetDirectoryName(cliExePath) ?? Environment.CurrentDirectory;
+                startInfo.UseShellExecute = false;
+                startInfo.CreateNoWindow = true;
+                startInfo.RedirectStandardOutput = true;
+                startInfo.RedirectStandardError = true;
+
+                using (var process = Process.Start(startInfo))
+                {
+                    if (process == null)
+                    {
+                        return Response(false, "Failed to start audiocpp_cli.");
+                    }
+
+                    var stdout = process.StandardOutput.ReadToEnd();
+                    var stderr = process.StandardError.ReadToEnd();
+                    if (!process.WaitForExit(120000))
+                    {
+                        try
+                        {
+                            process.Kill();
+                        }
+                        catch
+                        {
+                        }
+
+                        return Response(false, "audiocpp_cli timed out during reference synthesis.");
+                    }
+
+                    if (process.ExitCode != 0)
+                    {
+                        return Response(false, string.Format("audiocpp_cli failed with exit code {0}: {1}", process.ExitCode, string.IsNullOrWhiteSpace(stderr) ? stdout : stderr));
+                    }
+
+                    if (!File.Exists(outputPath))
+                    {
+                        return Response(false, "Reference synthesis completed but no WAV output was created.");
+                    }
+
+                    var wavBytes = File.ReadAllBytes(outputPath);
+                    var response = Response(true, null);
+                    response.Add("wavBase64", Convert.ToBase64String(wavBytes));
+                    response.Add("byteLength", wavBytes.Length);
+                    response.Add("stdout", stdout);
+                    response.Add("stderr", stderr);
+                    return response;
+                }
+            }
+            catch (Exception ex)
+            {
+                return Response(false, ex.Message);
+            }
+            finally
+            {
+                TryDeleteFile(voiceRefPath);
+                TryDeleteFile(outputPath);
+            }
+        }
+
+        private static string EscapeArgument(string value)
+        {
+            return (value ?? string.Empty).Replace("\"", "\\\"");
+        }
+
+        private static string SanitizeFileName(string value)
+        {
+            var invalidChars = Path.GetInvalidFileNameChars();
+            var builder = new StringBuilder(value.Length);
+            foreach (var character in value)
+            {
+                builder.Append(Array.IndexOf(invalidChars, character) >= 0 ? '_' : character);
+            }
+
+            var sanitized = builder.ToString();
+            return string.IsNullOrWhiteSpace(sanitized) ? "reference.wav" : sanitized;
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch
+            {
             }
         }
     }

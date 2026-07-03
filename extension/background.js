@@ -1,9 +1,18 @@
 const SERVER_URL = "http://127.0.0.1:8080";
 const BRIDGE_HOST_NAME = "com.pockettts.engine";
 const DEFAULT_SERVER_EXE_PATH = "C:\\Projects\\audio.cpp\\build\\windows-cuda-release\\bin\\audiocpp_server.exe";
+const DEFAULT_CLI_EXE_PATH = "C:\\Projects\\audio.cpp\\build\\windows-cuda-release\\bin\\audiocpp_cli.exe";
 const DEFAULT_SERVER_CONFIG_PATH = "C:\\Projects\\audio.cpp\\server.json";
+const DEFAULT_POCKET_MODEL_PATH = "C:\\Projects\\audio.cpp\\models\\pocket-tts";
+const DEFAULT_POCKET_FAMILY = "pocket_tts";
+const DEFAULT_POCKET_BACKEND = "cuda";
 const BRIDGE_INSTALL_SCRIPT_PATH = "C:\\Projects\\pocket-tts-engine\\scripts\\install-native-bridge.ps1";
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
+const CUSTOM_VOICES_STORAGE_KEY = "pocket-tts-custom-voices";
+const CUSTOM_VOICE_DB_NAME = "pocket-tts-custom-voices-db";
+const CUSTOM_VOICE_STORE_NAME = "voices";
+const CUSTOM_VOICE_DB_VERSION = 1;
+const CUSTOM_VOICE_FILE_PREFIX = "custom-voice:";
 
 const VOICE_MAP = {
   "Pocket US Female": "alba",
@@ -16,11 +25,25 @@ const VOICE_MAP = {
   "Pocket UK Child": "isla"
 };
 
+const BUILTIN_VOICES = [
+  { voiceName: "Pocket US Female", lang: "en-US", eventTypes: ["start", "end", "word", "sentence", "error"] },
+  { voiceName: "Pocket US Male", lang: "en-US", eventTypes: ["start", "end", "word", "sentence", "error"] },
+  { voiceName: "Pocket UK Female", lang: "en-GB", eventTypes: ["start", "end", "word", "sentence", "error"] },
+  { voiceName: "Pocket UK Male", lang: "en-GB", eventTypes: ["start", "end", "word", "sentence", "error"] },
+  { voiceName: "Pocket AU Female", lang: "en-AU", eventTypes: ["start", "end", "word", "sentence", "error"] },
+  { voiceName: "Pocket AU Male", lang: "en-AU", eventTypes: ["start", "end", "word", "sentence", "error"] },
+  { voiceName: "Pocket US Child", lang: "en-US", eventTypes: ["start", "end", "word", "sentence", "error"] },
+  { voiceName: "Pocket UK Child", lang: "en-GB", eventTypes: ["start", "end", "word", "sentence", "error"] }
+];
+
 let activeRequestId = 0;
 let activeAbortController = null;
 let creatingOffscreenDocument = null;
 let fallbackQueue = Promise.resolve();
 let fallbackGeneration = 0;
+let supportedMappedVoicesCache = null;
+
+const VOICE_PROBE_TEXT = "Pocket voice probe.";
 
 function emitDebugLog(message, detail = null) {
   const entry = {
@@ -57,8 +80,331 @@ function clamp(value, min, max, fallback) {
   return Math.min(max, Math.max(min, numeric));
 }
 
+function arrayBufferToBase64(arrayBuffer) {
+  let binary = "";
+  const bytes = new Uint8Array(arrayBuffer);
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function base64ToArrayBuffer(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+function getStorageLocal(keys) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(keys, resolve);
+  });
+}
+
+function setStorageLocal(values) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set(values, resolve);
+  });
+}
+
+function removeStorageLocal(keys) {
+  return new Promise((resolve) => {
+    chrome.storage.local.remove(keys, resolve);
+  });
+}
+
+function openCustomVoiceDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(CUSTOM_VOICE_DB_NAME, CUSTOM_VOICE_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(CUSTOM_VOICE_STORE_NAME)) {
+        db.createObjectStore(CUSTOM_VOICE_STORE_NAME, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function buildCustomVoiceFilePath(id) {
+  return `${CUSTOM_VOICE_FILE_PREFIX}${id}`;
+}
+
+function isCustomVoiceFilePath(value) {
+  return String(value || "").startsWith(CUSTOM_VOICE_FILE_PREFIX);
+}
+
+function getCustomVoiceIdFromFilePath(value) {
+  if (!isCustomVoiceFilePath(value)) {
+    return "";
+  }
+  return String(value).slice(CUSTOM_VOICE_FILE_PREFIX.length);
+}
+
+async function listCustomVoices() {
+  const db = await openCustomVoiceDatabase();
+  const records = await new Promise((resolve, reject) => {
+    const tx = db.transaction(CUSTOM_VOICE_STORE_NAME, "readonly");
+    const request = tx.objectStore(CUSTOM_VOICE_STORE_NAME).getAll();
+    request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+  return records.sort((left, right) => Number(left?.createdAt || 0) - Number(right?.createdAt || 0));
+}
+
+async function getCustomVoiceRecord(filePath) {
+  const id = getCustomVoiceIdFromFilePath(filePath);
+  if (!id) {
+    return null;
+  }
+
+  const db = await openCustomVoiceDatabase();
+  const record = await new Promise((resolve, reject) => {
+    const tx = db.transaction(CUSTOM_VOICE_STORE_NAME, "readonly");
+    const request = tx.objectStore(CUSTOM_VOICE_STORE_NAME).get(id);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+  return record;
+}
+
+async function saveCustomVoiceRecord(record) {
+  const db = await openCustomVoiceDatabase();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(CUSTOM_VOICE_STORE_NAME, "readwrite");
+    tx.objectStore(CUSTOM_VOICE_STORE_NAME).put(record);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+function dataUrlToArrayBuffer(dataUrl) {
+  const commaIndex = String(dataUrl).indexOf(",");
+  if (commaIndex < 0) {
+    throw new Error("Invalid data URL.");
+  }
+  const base64 = String(dataUrl).slice(commaIndex + 1);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+async function migrateLegacyCustomVoices() {
+  const result = await getStorageLocal([CUSTOM_VOICES_STORAGE_KEY]);
+  const legacyVoices = Array.isArray(result[CUSTOM_VOICES_STORAGE_KEY]) ? result[CUSTOM_VOICES_STORAGE_KEY] : [];
+  if (legacyVoices.length === 0) {
+    return;
+  }
+
+  const existingVoices = await listCustomVoices();
+  const existingIds = new Set(existingVoices.map((voice) => voice.id));
+
+  for (const legacyVoice of legacyVoices) {
+    if (!legacyVoice?.id || existingIds.has(legacyVoice.id)) {
+      continue;
+    }
+
+    await saveCustomVoiceRecord({
+      id: legacyVoice.id,
+      voiceName: legacyVoice.voiceName,
+      lang: legacyVoice.lang || "en-US",
+      baseVoiceName: legacyVoice.baseVoiceName || "Pocket US Female",
+      fileName: legacyVoice.referenceSample?.name || "reference.wav",
+      mimeType: legacyVoice.referenceSample?.type || "audio/wav",
+      size: legacyVoice.referenceSample?.size || 0,
+      arrayBuffer: dataUrlToArrayBuffer(legacyVoice.referenceSample?.dataUrl || ""),
+      createdAt: legacyVoice.createdAt || Date.now(),
+      filePath: buildCustomVoiceFilePath(legacyVoice.id),
+      source: "custom"
+    });
+  }
+
+  await removeStorageLocal([CUSTOM_VOICES_STORAGE_KEY]);
+  emitDebugLog("Legacy custom voices migrated", {
+    migratedCount: legacyVoices.length
+  });
+}
+
+async function loadCustomVoices() {
+  await migrateLegacyCustomVoices();
+  const customVoices = await listCustomVoices();
+  return customVoices.map((voice) => ({
+    id: voice.id,
+    voiceName: voice.voiceName,
+    lang: voice.lang || "en-US",
+    baseVoiceName: voice.baseVoiceName || "Pocket US Female",
+    filePath: voice.filePath || buildCustomVoiceFilePath(voice.id),
+    fileName: voice.fileName || "reference.wav",
+    mimeType: voice.mimeType || "audio/wav",
+    size: voice.size || 0
+  }));
+}
+
+async function refreshRegisteredVoices() {
+  const customVoices = await loadCustomVoices();
+  const supportedMappedVoices = await getSupportedMappedVoices();
+  const builtinVoices = BUILTIN_VOICES.filter((voice) => supportedMappedVoices.has(getVoiceName(voice.voiceName)));
+  const registeredCustomVoices = customVoices.filter((voice) => supportedMappedVoices.has(getVoiceName(voice.baseVoiceName || "Pocket US Female")));
+
+  chrome.ttsEngine.updateVoices([
+    ...builtinVoices,
+    ...registeredCustomVoices.map((voice) => ({
+      voiceName: voice.voiceName,
+      lang: voice.lang || "en-US",
+      eventTypes: ["start", "end", "word", "sentence", "error"]
+    }))
+  ]);
+  emitDebugLog("Voices updated", {
+    builtinCount: builtinVoices.length,
+    customCount: registeredCustomVoices.length
+  });
+}
+
 function getVoiceName(voiceName) {
   return VOICE_MAP[voiceName] || VOICE_MAP["Pocket US Female"];
+}
+
+async function probeMappedVoice(mappedVoice) {
+  const response = await fetch(`${SERVER_URL}/v1/audio/speech`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "pocket-tts",
+      input: VOICE_PROBE_TEXT,
+      voice: mappedVoice,
+      speed: 1,
+      pitch: 1,
+      response_format: "wav"
+    })
+  });
+
+  if (!response.ok) {
+    const responseText = await response.text().catch(() => "");
+    throw new Error(responseText || `HTTP ${response.status}`);
+  }
+}
+
+async function getSupportedMappedVoices() {
+  if (supportedMappedVoicesCache) {
+    return supportedMappedVoicesCache;
+  }
+
+  const mappedVoices = [...new Set(Object.values(VOICE_MAP))];
+  const supported = new Set();
+  const unsupported = [];
+
+  for (const mappedVoice of mappedVoices) {
+    try {
+      await probeMappedVoice(mappedVoice);
+      supported.add(mappedVoice);
+    } catch (error) {
+      unsupported.push({
+        mappedVoice,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  supportedMappedVoicesCache = supported;
+  emitDebugLog("Mapped voice support probed", {
+    supported: [...supported],
+    unsupported
+  });
+  return supportedMappedVoicesCache;
+}
+
+async function getVoiceProfile(voiceName) {
+  const builtinVoice = BUILTIN_VOICES.find((voice) => voice.voiceName === voiceName);
+  if (builtinVoice) {
+    return {
+      type: "builtin",
+      voiceName: builtinVoice.voiceName,
+      mappedVoice: getVoiceName(builtinVoice.voiceName)
+    };
+  }
+
+  const customVoices = await loadCustomVoices();
+  const customVoice = customVoices.find((voice) => voice.voiceName === voiceName);
+  if (customVoice) {
+    return {
+      type: "reference",
+      voiceName: customVoice.voiceName,
+      mappedVoice: getVoiceName(customVoice.baseVoiceName || "Pocket US Female"),
+      filePath: customVoice.filePath || null,
+      fileName: customVoice.fileName || "reference.wav",
+      mimeType: customVoice.mimeType || "audio/wav"
+    };
+  }
+
+  return {
+    type: "builtin",
+    voiceName: "Pocket US Female",
+    mappedVoice: getVoiceName("Pocket US Female")
+  };
+}
+
+async function buildSpeechRequest(utterance, options) {
+  const voiceProfile = await getVoiceProfile(options.voiceName);
+  const payload = {
+    model: "pocket-tts",
+    input: utterance,
+    voice: voiceProfile.mappedVoice,
+    speed: clamp(options.rate, 0.1, 10, 1),
+    pitch: clamp(options.pitch, 0, 2, 1),
+    response_format: "wav"
+  };
+
+  if (voiceProfile.type !== "reference" || !voiceProfile.filePath) {
+    return {
+      mode: "http",
+      requestInit: {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      },
+      debug: {
+        mode: "builtin",
+        mappedVoice: voiceProfile.mappedVoice
+      }
+    };
+  }
+
+  const customVoice = await getCustomVoiceRecord(voiceProfile.filePath);
+  if (!customVoice?.arrayBuffer) {
+    throw new Error("Custom Pocket voice data was not found.");
+  }
+
+  return {
+    mode: "native-cli",
+    cliRequest: {
+      cliExePath: DEFAULT_CLI_EXE_PATH,
+      modelPath: DEFAULT_POCKET_MODEL_PATH,
+      backend: DEFAULT_POCKET_BACKEND,
+      family: DEFAULT_POCKET_FAMILY,
+      text: utterance,
+      voiceRefBase64: arrayBufferToBase64(customVoice.arrayBuffer),
+      voiceRefFileName: customVoice.fileName || voiceProfile.fileName || "reference.wav"
+    },
+    debug: {
+      mode: "reference",
+      mappedVoice: voiceProfile.mappedVoice,
+      referenceFile: customVoice.fileName || voiceProfile.fileName || "reference.wav",
+      referenceBytes: customVoice.size || customVoice.arrayBuffer.byteLength || 0,
+      synthesisPath: "native-bridge-cli"
+    }
+  };
 }
 
 async function hasOffscreenDocument(path) {
@@ -276,13 +622,13 @@ function sendAudioChunks(samples, audioStreamOptions, utteranceLength, sendTtsAu
 async function synthesizeSpeech(utterance, options, audioStreamOptions, sendTtsAudio) {
   activeRequestId += 1;
   const requestId = activeRequestId;
-  const mappedVoice = getVoiceName(options.voiceName);
+  const speechRequest = await buildSpeechRequest(utterance, options);
 
   emitDebugLog("Speech request received", {
     requestId,
     utteranceLength: utterance.length,
     voiceName: options.voiceName,
-    mappedVoice,
+    ...speechRequest.debug,
     rate: options.rate,
     pitch: options.pitch,
     volume: options.volume,
@@ -296,31 +642,49 @@ async function synthesizeSpeech(utterance, options, audioStreamOptions, sendTtsA
 
   activeAbortController = new AbortController();
 
-  const response = await fetch(`${SERVER_URL}/v1/audio/speech`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    signal: activeAbortController.signal,
-    body: JSON.stringify({
-      model: "pocket-tts",
-      input: utterance,
-      voice: mappedVoice,
-      speed: clamp(options.rate, 0.1, 10, 1),
-      pitch: clamp(options.pitch, 0, 2, 1),
-      response_format: "wav"
-    })
-  });
+  let wavData;
+  if (speechRequest.mode === "native-cli") {
+    const nativeResponse = await sendNativeCommand({
+      command: "synthReferenceSpeech",
+      cliExePath: speechRequest.cliRequest.cliExePath,
+      modelPath: speechRequest.cliRequest.modelPath,
+      backend: speechRequest.cliRequest.backend,
+      family: speechRequest.cliRequest.family,
+      text: speechRequest.cliRequest.text,
+      voiceRefBase64: speechRequest.cliRequest.voiceRefBase64,
+      voiceRefFileName: speechRequest.cliRequest.voiceRefFileName
+    });
 
-  emitDebugLog("Speech fetch completed", {
-    requestId,
-    status: response.status,
-    ok: response.ok
-  });
+    emitDebugLog("Speech native synthesis completed", {
+      requestId,
+      ok: nativeResponse?.ok === true,
+      byteLength: nativeResponse?.byteLength || 0
+    });
 
-  if (!response.ok) {
-    throw new Error(`Pocket TTS server returned HTTP ${response.status}`);
+    if (!nativeResponse?.ok || !nativeResponse?.wavBase64) {
+      throw new Error(nativeResponse?.error || "Native reference synthesis failed.");
+    }
+
+    wavData = base64ToArrayBuffer(nativeResponse.wavBase64);
+  } else {
+    const response = await fetch(`${SERVER_URL}/v1/audio/speech`, {
+      signal: activeAbortController.signal,
+      ...speechRequest.requestInit
+    });
+
+    emitDebugLog("Speech fetch completed", {
+      requestId,
+      status: response.status,
+      ok: response.ok
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text().catch(() => "");
+      throw new Error(responseText || `Pocket TTS server returned HTTP ${response.status}`);
+    }
+
+    wavData = await response.arrayBuffer();
   }
-
-  const wavData = await response.arrayBuffer();
   emitDebugLog("WAV payload received", {
     requestId,
     byteLength: wavData.byteLength
@@ -359,29 +723,42 @@ async function synthesizeSpeech(utterance, options, audioStreamOptions, sendTtsA
 }
 
 async function synthesizeWavAudio(utterance, options) {
-  const mappedVoice = getVoiceName(options.voiceName);
+  const speechRequest = await buildSpeechRequest(utterance, options);
 
   emitDebugLog("Fallback speech request received", {
     utteranceLength: utterance.length,
     voiceName: options.voiceName,
-    mappedVoice,
+    ...speechRequest.debug,
     rate: options.rate,
     pitch: options.pitch,
     volume: options.volume
   });
 
-  const response = await fetch(`${SERVER_URL}/v1/audio/speech`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "pocket-tts",
-      input: utterance,
-      voice: mappedVoice,
-      speed: clamp(options.rate, 0.1, 10, 1),
-      pitch: clamp(options.pitch, 0, 2, 1),
-      response_format: "wav"
-    })
-  });
+  if (speechRequest.mode === "native-cli") {
+    const nativeResponse = await sendNativeCommand({
+      command: "synthReferenceSpeech",
+      cliExePath: speechRequest.cliRequest.cliExePath,
+      modelPath: speechRequest.cliRequest.modelPath,
+      backend: speechRequest.cliRequest.backend,
+      family: speechRequest.cliRequest.family,
+      text: speechRequest.cliRequest.text,
+      voiceRefBase64: speechRequest.cliRequest.voiceRefBase64,
+      voiceRefFileName: speechRequest.cliRequest.voiceRefFileName
+    });
+
+    emitDebugLog("Fallback speech native synthesis completed", {
+      ok: nativeResponse?.ok === true,
+      byteLength: nativeResponse?.byteLength || 0
+    });
+
+    if (!nativeResponse?.ok || !nativeResponse?.wavBase64) {
+      throw new Error(nativeResponse?.error || "Native reference synthesis failed.");
+    }
+
+    return base64ToArrayBuffer(nativeResponse.wavBase64);
+  }
+
+  const response = await fetch(`${SERVER_URL}/v1/audio/speech`, speechRequest.requestInit);
 
   emitDebugLog("Fallback speech fetch completed", {
     status: response.status,
@@ -389,7 +766,8 @@ async function synthesizeWavAudio(utterance, options) {
   });
 
   if (!response.ok) {
-    throw new Error(`Pocket TTS server returned HTTP ${response.status}`);
+    const responseText = await response.text().catch(() => "");
+    throw new Error(responseText || `Pocket TTS server returned HTTP ${response.status}`);
   }
 
   return response.arrayBuffer();
@@ -551,6 +929,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: true, response });
         return;
       }
+      case "voices.refresh":
+        await refreshRegisteredVoices();
+        sendResponse({ ok: true });
+        return;
       default:
         sendResponse({
           ok: false,
@@ -571,5 +953,9 @@ fetch(`${SERVER_URL}/health`)
   .then((response) => response.json())
   .then((data) => console.log("Pocket TTS server healthy:", data))
   .catch((error) => console.warn("Pocket TTS server not running:", error.message));
+
+refreshRegisteredVoices().catch((error) => {
+  console.warn("Pocket TTS voice registration failed:", error.message);
+});
 
 console.log(`Pocket TTS extension loaded: ${chrome.runtime.id}`);

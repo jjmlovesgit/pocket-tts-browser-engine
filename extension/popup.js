@@ -1,9 +1,6 @@
-// popup.js
-
 const SERVER_URL = 'http://127.0.0.1:8080';
 const STORAGE_KEY = 'pocket-tts-settings';
 
-// DOM
 const statusBadge = document.getElementById('statusBadge');
 const statusDot = document.getElementById('statusDot');
 const serverStatus = document.getElementById('serverStatus');
@@ -20,6 +17,7 @@ const bridgeExtensionIdInput = document.getElementById('bridgeExtensionIdInput')
 
 let settings = {};
 let isSpeaking = false;
+
 const FALLBACK_VOICE_NAMES = [
   'Pocket US Female',
   'Pocket US Male',
@@ -30,15 +28,22 @@ const FALLBACK_VOICE_NAMES = [
   'Pocket US Child',
   'Pocket UK Child'
 ];
-const INSTALLER_EXTENSION_ID_KEY = 'bridgeExtensionId';
 
-// ============================================
-// Logging
-// ============================================
+const INSTALLER_EXTENSION_ID_KEY = 'bridgeExtensionId';
+const BACKEND_VOICE_LABELS = {
+  'Pocket US Female': 'alba',
+  'Pocket US Male': 'michael',
+  'Pocket UK Female': 'anna',
+  'Pocket UK Male': 'michael',
+  'Pocket AU Female': 'alba',
+  'Pocket AU Male': 'michael',
+  'Pocket US Child': 'emma',
+  'Pocket UK Child': 'isla'
+};
 
 function addLog(message, type = 'info') {
   const timestamp = new Date().toLocaleTimeString();
-  const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
+  const prefix = type === 'error' ? '[error]' : type === 'success' ? '[ok]' : '[info]';
   const className = type === 'error' ? 'log-error' : type === 'success' ? 'log-success' : 'log-info';
   const line = document.createElement('div');
   line.className = className;
@@ -46,15 +51,35 @@ function addLog(message, type = 'info') {
   logArea.appendChild(line);
   logArea.scrollTop = logArea.scrollHeight;
 
-  // Keep log manageable
   while (logArea.children.length > 50) {
     logArea.removeChild(logArea.firstChild);
   }
 }
 
-// ============================================
-// Status
-// ============================================
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function getBackendVoiceId(voiceName) {
+  if (BACKEND_VOICE_LABELS[voiceName]) {
+    return BACKEND_VOICE_LABELS[voiceName];
+  }
+
+  if (voiceName.startsWith('Pocket Clone - ')) {
+    return `ref:${voiceName.slice('Pocket Clone - '.length)}`;
+  }
+
+  return 'unknown';
+}
+
+function formatVoiceLabel(voiceName) {
+  return `${voiceName} (${getBackendVoiceId(voiceName)})`;
+}
 
 function setStatus(state, message) {
   statusBadge.textContent = state.toUpperCase();
@@ -77,24 +102,20 @@ async function checkStatus() {
       signal: AbortSignal.timeout(1500)
     });
     if (response.ok) {
-      setStatus('ready', '✅ Running');
+      setStatus('ready', 'Running');
       addLog('Server healthy', 'success');
       return true;
-    } else {
-      setStatus('error', `❌ ${response.status}`);
-      addLog(`Server error: ${response.status}`, 'error');
-      return false;
     }
+
+    setStatus('error', `${response.status}`);
+    addLog(`Server error: ${response.status}`, 'error');
+    return false;
   } catch (error) {
-    setStatus('error', '❌ Not running');
+    setStatus('error', 'Not running');
     addLog(`Server not reachable: ${error.message}`, 'error');
     return false;
   }
 }
-
-// ============================================
-// Voices
-// ============================================
 
 async function loadVoices() {
   try {
@@ -102,19 +123,18 @@ async function loadVoices() {
       chrome.tts.getVoices(resolve);
     });
 
-    const pocketVoices = voices.filter(v => v.voiceName && v.voiceName.startsWith('Pocket'));
+    const pocketVoices = voices.filter((voice) => voice.voiceName && voice.voiceName.startsWith('Pocket'));
 
     if (pocketVoices.length === 0) {
-      // Fallback to hardcoded voices
       voiceSelect.innerHTML = FALLBACK_VOICE_NAMES.map((voiceName) => `
-        <option value="${voiceName}">${voiceName}</option>
+        <option value="${escapeHtml(voiceName)}">${escapeHtml(formatVoiceLabel(voiceName))}</option>
       `).join('');
       addLog('Using fallback voice list', 'info');
       return;
     }
 
-    voiceSelect.innerHTML = pocketVoices.map(v => `
-      <option value="${v.voiceName}">${v.voiceName}</option>
+    voiceSelect.innerHTML = pocketVoices.map((voice) => `
+      <option value="${escapeHtml(voice.voiceName)}">${escapeHtml(formatVoiceLabel(voice.voiceName))}</option>
     `).join('');
 
     addLog(`Loaded ${pocketVoices.length} Pocket voices`, 'success');
@@ -122,10 +142,6 @@ async function loadVoices() {
     addLog(`Failed to load voices: ${error.message}`, 'error');
   }
 }
-
-// ============================================
-// Settings
-// ============================================
 
 function loadSettings() {
   chrome.storage.local.get([STORAGE_KEY], (result) => {
@@ -161,10 +177,6 @@ function normalizeExtensionId(value) {
   return '';
 }
 
-// ============================================
-// Speech
-// ============================================
-
 function speak(text) {
   if (isSpeaking) {
     chrome.tts.stop();
@@ -182,31 +194,31 @@ function speak(text) {
   }
 
   speakBtn.disabled = true;
-  speakBtn.textContent = '🔊 Speaking...';
+  speakBtn.textContent = 'Speaking...';
   addLog(`Speaking: "${text.substring(0, 40)}${text.length > 40 ? '...' : ''}"`, 'info');
 
   chrome.tts.speak(text, {
     voiceName: voice,
-    rate: rate,
-    pitch: pitch,
-    volume: volume,
+    rate,
+    pitch,
+    volume,
     onEvent: (event) => {
       if (event.type === 'start') {
         isSpeaking = true;
       } else if (event.type === 'end') {
         isSpeaking = false;
         speakBtn.disabled = false;
-        speakBtn.textContent = '🔊 Speak';
+        speakBtn.textContent = 'Speak';
         addLog('Speech complete', 'success');
       } else if (event.type === 'error') {
         isSpeaking = false;
         speakBtn.disabled = false;
-        speakBtn.textContent = '🔊 Speak';
+        speakBtn.textContent = 'Speak';
         addLog(`Speech error: ${event.errorMessage}`, 'error');
       } else if (event.type === 'interrupted' || event.type === 'cancelled') {
         isSpeaking = false;
         speakBtn.disabled = false;
-        speakBtn.textContent = '🔊 Speak';
+        speakBtn.textContent = 'Speak';
         addLog('Speech stopped', 'info');
       }
     }
@@ -217,7 +229,7 @@ function stopSpeech() {
   chrome.tts.stop();
   isSpeaking = false;
   speakBtn.disabled = false;
-  speakBtn.textContent = '🔊 Speak';
+  speakBtn.textContent = 'Speak';
   addLog('Speech stopped by user', 'info');
 }
 
@@ -237,11 +249,6 @@ async function openSidePanel() {
   }
 }
 
-// ============================================
-// Event Listeners
-// ============================================
-
-// Speak button
 speakBtn.addEventListener('click', () => {
   const text = prompt('Enter text to speak:', 'Hello, this is a test of the Pocket TTS engine.');
   if (text !== null && text.trim() !== '') {
@@ -249,25 +256,23 @@ speakBtn.addEventListener('click', () => {
   }
 });
 
-// Stop button
 stopBtn.addEventListener('click', stopSpeech);
 
-// Quick test buttons
-document.querySelectorAll('.quick-test .btn').forEach(btn => {
+document.querySelectorAll('.quick-test .btn').forEach((btn) => {
   btn.addEventListener('click', () => {
     const text = btn.dataset.text;
-    if (text) speak(text);
+    if (text) {
+      speak(text);
+    }
   });
 });
 
-// Refresh
 refreshBtn.addEventListener('click', () => {
   addLog('Refreshing...', 'info');
   checkStatus();
   loadVoices();
 });
 
-// Options
 optionsBtn.addEventListener('click', () => {
   openSidePanel();
 });
@@ -276,13 +281,11 @@ openOptionsLink.addEventListener('click', () => {
   openSidePanel();
 });
 
-// Clear log
 clearLogBtn.addEventListener('click', () => {
   logArea.innerHTML = '';
   addLog('Log cleared', 'info');
 });
 
-// Voice selection saves preference
 voiceSelect.addEventListener('change', () => {
   settings.defaultVoice = voiceSelect.value;
   chrome.storage.local.set({ [STORAGE_KEY]: settings });
@@ -299,16 +302,11 @@ bridgeExtensionIdInput.addEventListener('blur', () => {
   chrome.storage.local.set({ [STORAGE_KEY]: settings });
 });
 
-// ============================================
-// Init
-// ============================================
-
 function init() {
   extensionId.textContent = `v0.1.0 (${chrome.runtime.id.substring(0, 8)}...)`;
   loadSettings();
-  addLog('🚀 Pocket TTS Engine ready', 'info');
+  addLog('Pocket TTS Engine ready', 'info');
 
-  // Check status and load voices after a moment
   setTimeout(() => {
     checkStatus();
     loadVoices();

@@ -1,5 +1,11 @@
 const SERVER_URL = "http://127.0.0.1:8080";
 const STORAGE_KEY = "pocket-tts-settings";
+const CUSTOM_VOICES_STORAGE_KEY = "pocket-tts-custom-voices";
+const CUSTOM_VOICE_DB_NAME = "pocket-tts-custom-voices-db";
+const CUSTOM_VOICE_STORE_NAME = "voices";
+const CUSTOM_VOICE_DB_VERSION = 1;
+const CUSTOM_VOICE_FILE_PREFIX = "custom-voice:";
+const DEFAULT_THEME = "light";
 
 const statusDisplay = document.getElementById("statusDisplay");
 const statusText = document.getElementById("statusText");
@@ -18,6 +24,7 @@ const pitchSlider = document.getElementById("pitchSlider");
 const pitchDisplay = document.getElementById("pitchDisplay");
 const volumeSlider = document.getElementById("volumeSlider");
 const volumeDisplay = document.getElementById("volumeDisplay");
+const testVoiceSelect = document.getElementById("testVoiceSelect");
 const testText = document.getElementById("testText");
 const testSpeakBtn = document.getElementById("testSpeakBtn");
 const testStopBtn = document.getElementById("testStopBtn");
@@ -30,6 +37,13 @@ const installBridgeBtn = document.getElementById("installBridgeBtn");
 const startServerBtn = document.getElementById("startServerBtn");
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
 const bridgeExtensionIdInput = document.getElementById("bridgeExtensionIdInput");
+const themeToggleBtn = document.getElementById("themeToggleBtn");
+const cloneNameInput = document.getElementById("cloneNameInput");
+const cloneBaseVoiceSelect = document.getElementById("cloneBaseVoiceSelect");
+const cloneWavInput = document.getElementById("cloneWavInput");
+const cloneVoiceBtn = document.getElementById("cloneVoiceBtn");
+const cloneStatus = document.getElementById("cloneStatus");
+const cloneRegisteredList = document.getElementById("cloneRegisteredList");
 
 let settings = {};
 let isSpeaking = false;
@@ -46,6 +60,16 @@ const FALLBACK_VOICE_NAMES = [
 ];
 
 const INSTALLER_EXTENSION_ID_KEY = "bridgeExtensionId";
+const BACKEND_VOICE_LABELS = {
+  "Pocket US Female": "alba",
+  "Pocket US Male": "michael",
+  "Pocket UK Female": "anna",
+  "Pocket UK Male": "michael",
+  "Pocket AU Female": "alba",
+  "Pocket AU Male": "michael",
+  "Pocket US Child": "emma",
+  "Pocket UK Child": "isla"
+};
 
 function sendBackgroundMessage(message) {
   return new Promise((resolve, reject) => {
@@ -67,6 +91,18 @@ function sendBackgroundMessage(message) {
 
       resolve(response);
     });
+  });
+}
+
+function getStorageLocal(keys) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(keys, resolve);
+  });
+}
+
+function removeStorageLocal(keys) {
+  return new Promise((resolve) => {
+    chrome.storage.local.remove(keys, resolve);
   });
 }
 
@@ -93,6 +129,64 @@ chrome.runtime.onMessage.addListener((message) => {
 function setStatus(state, message) {
   statusDisplay.className = `status-row ${state}`;
   statusText.textContent = message;
+}
+
+function setCloneStatus(message, type = "info") {
+  cloneStatus.textContent = message;
+  cloneStatus.style.color = type === "error"
+    ? "var(--danger)"
+    : type === "success"
+      ? "var(--success)"
+      : "var(--muted)";
+}
+
+function applyTheme(theme) {
+  const normalizedTheme = theme === "dark" ? "dark" : "light";
+  document.body.dataset.theme = normalizedTheme;
+  themeToggleBtn.textContent = normalizedTheme === "dark" ? "Switch to Light" : "Switch to Dark";
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function getBackendVoiceId(voiceName) {
+  if (BACKEND_VOICE_LABELS[voiceName]) {
+    return BACKEND_VOICE_LABELS[voiceName];
+  }
+
+  if (voiceName.startsWith("Pocket Clone - ")) {
+    return `ref:${voiceName.slice("Pocket Clone - ".length)}`;
+  }
+
+  return "unknown";
+}
+
+function formatVoiceLabel(voiceName) {
+  return `${voiceName} (${getBackendVoiceId(voiceName)})`;
+}
+
+async function logRuntimeSummary() {
+  try {
+    const customVoices = await getCustomVoices();
+    addLog("Runtime: built-in Pocket voices use local server HTTP on 127.0.0.1:8080", "info");
+    addLog("Runtime: custom Pocket voices use native bridge + audiocpp_cli with --voice-ref", "info");
+    addLog(`Runtime: ${customVoices.length} custom reference voice${customVoices.length === 1 ? "" : "s"} saved locally`, "info");
+  } catch (error) {
+    addLog(`Runtime summary unavailable: ${error.message}`, "error");
+  }
+}
+
+function renderVoiceSelectOptions(selectElement, voices) {
+  selectElement.innerHTML = voices.map((voice) => {
+    const voiceName = typeof voice === "string" ? voice : voice.voiceName;
+    return `<option value="${escapeHtml(voiceName)}">${escapeHtml(formatVoiceLabel(voiceName))}</option>`;
+  }).join("");
 }
 
 async function checkStatus() {
@@ -127,6 +221,22 @@ async function checkStatus() {
   }
 }
 
+function renderBaseVoiceOptions(voices) {
+  const normalizedVoices = voices.map((voice) => typeof voice === "string" ? { voiceName: voice } : voice);
+  const currentValue = cloneBaseVoiceSelect.value;
+
+  cloneBaseVoiceSelect.innerHTML = normalizedVoices.map((voice) => `
+    <option value="${escapeHtml(voice.voiceName)}">${escapeHtml(formatVoiceLabel(voice.voiceName))}</option>
+  `).join("");
+
+  if (currentValue && cloneBaseVoiceSelect.querySelector(`option[value="${currentValue}"]`)) {
+    cloneBaseVoiceSelect.value = currentValue;
+    return;
+  }
+
+  cloneBaseVoiceSelect.value = "Pocket US Female";
+}
+
 async function loadVoices() {
   try {
     const voices = await new Promise((resolve) => {
@@ -139,12 +249,15 @@ async function loadVoices() {
       voiceList.innerHTML = FALLBACK_VOICE_NAMES.map((voiceName) => `
         <div class="voice-item">
           <span class="check">?</span>
-          ${voiceName} <span style="color:#999;font-size:12px;">(fallback)</span>
+          ${escapeHtml(formatVoiceLabel(voiceName))} <span style="color:var(--muted);font-size:12px;">(fallback)</span>
         </div>
       `).join("");
-      defaultVoiceSelect.innerHTML = FALLBACK_VOICE_NAMES.map((voiceName) => `
-        <option value="${voiceName}">${voiceName}</option>
-      `).join("");
+      renderVoiceSelectOptions(defaultVoiceSelect, FALLBACK_VOICE_NAMES);
+      renderVoiceSelectOptions(testVoiceSelect, FALLBACK_VOICE_NAMES);
+      renderBaseVoiceOptions(FALLBACK_VOICE_NAMES);
+      if (settings.defaultVoice && testVoiceSelect.querySelector(`option[value="${settings.defaultVoice}"]`)) {
+        testVoiceSelect.value = settings.defaultVoice;
+      }
       addLog("No Pocket voices found", "error");
       return;
     }
@@ -152,16 +265,24 @@ async function loadVoices() {
     voiceList.innerHTML = pocketVoices.map((voice) => `
       <div class="voice-item">
         <span class="check">+</span>
-        ${voice.voiceName} <span style="color:#999;font-size:12px;">(${voice.lang})</span>
+        ${escapeHtml(formatVoiceLabel(voice.voiceName))} <span style="color:var(--muted);font-size:12px;">(${escapeHtml(voice.lang || "n/a")})</span>
       </div>
     `).join("");
 
-    defaultVoiceSelect.innerHTML = pocketVoices.map((voice) => `
-      <option value="${voice.voiceName}">${voice.voiceName}</option>
-    `).join("");
+    renderVoiceSelectOptions(defaultVoiceSelect, pocketVoices);
+    renderVoiceSelectOptions(testVoiceSelect, pocketVoices);
 
+    renderBaseVoiceOptions(pocketVoices.filter((voice) => !voice.voiceName.startsWith("Pocket Clone - ")));
+    if (settings.defaultVoice && defaultVoiceSelect.querySelector(`option[value="${settings.defaultVoice}"]`)) {
+      defaultVoiceSelect.value = settings.defaultVoice;
+    }
+    if (settings.defaultVoice && testVoiceSelect.querySelector(`option[value="${settings.defaultVoice}"]`)) {
+      testVoiceSelect.value = settings.defaultVoice;
+    }
     addLog(`Loaded ${pocketVoices.length} Pocket voices`, "success");
   } catch (error) {
+    renderVoiceSelectOptions(testVoiceSelect, FALLBACK_VOICE_NAMES);
+    renderBaseVoiceOptions(FALLBACK_VOICE_NAMES);
     addLog(`Failed to load voices: ${error.message}`, "error");
   }
 }
@@ -173,10 +294,12 @@ function loadSettings() {
       speed: 1.0,
       pitch: 1.0,
       volume: 1.0,
-      bridgeExtensionId: chrome.runtime.id
+      bridgeExtensionId: chrome.runtime.id,
+      theme: DEFAULT_THEME
     };
 
     defaultVoiceSelect.value = settings.defaultVoice || "Pocket US Female";
+    testVoiceSelect.value = settings.defaultVoice || "Pocket US Female";
     speedSlider.value = settings.speed || 1.0;
     speedDisplay.textContent = `${(settings.speed || 1.0).toFixed(1)}x`;
     pitchSlider.value = settings.pitch || 1.0;
@@ -184,16 +307,19 @@ function loadSettings() {
     volumeSlider.value = settings.volume || 1.0;
     volumeDisplay.textContent = `${Math.round((settings.volume || 1.0) * 100)}%`;
     bridgeExtensionIdInput.value = settings.bridgeExtensionId || chrome.runtime.id;
+    applyTheme(settings.theme || DEFAULT_THEME);
   });
 }
 
 function saveSettings() {
   settings = {
+    ...settings,
     defaultVoice: defaultVoiceSelect.value,
     speed: parseFloat(speedSlider.value),
     pitch: parseFloat(pitchSlider.value),
     volume: parseFloat(volumeSlider.value),
-    bridgeExtensionId: bridgeExtensionIdInput.value.trim() || chrome.runtime.id
+    bridgeExtensionId: bridgeExtensionIdInput.value.trim() || chrome.runtime.id,
+    theme: document.body.dataset.theme || DEFAULT_THEME
   };
 
   chrome.storage.local.set({ [STORAGE_KEY]: settings }, () => {
@@ -231,9 +357,224 @@ function getInstallerExtensionId() {
   return normalized;
 }
 
+function slugify(value) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+function openCustomVoiceDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(CUSTOM_VOICE_DB_NAME, CUSTOM_VOICE_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(CUSTOM_VOICE_STORE_NAME)) {
+        db.createObjectStore(CUSTOM_VOICE_STORE_NAME, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function buildCustomVoiceFilePath(id) {
+  return `${CUSTOM_VOICE_FILE_PREFIX}${id}`;
+}
+
+function dataUrlToArrayBuffer(dataUrl) {
+  const commaIndex = String(dataUrl).indexOf(",");
+  if (commaIndex < 0) {
+    throw new Error("Invalid data URL.");
+  }
+  const base64 = String(dataUrl).slice(commaIndex + 1);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+function readFileAsArrayBuffer(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Failed to read WAV file."));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+async function listCustomVoices() {
+  const db = await openCustomVoiceDatabase();
+  const records = await new Promise((resolve, reject) => {
+    const tx = db.transaction(CUSTOM_VOICE_STORE_NAME, "readonly");
+    const request = tx.objectStore(CUSTOM_VOICE_STORE_NAME).getAll();
+    request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+  return records.sort((left, right) => Number(left?.createdAt || 0) - Number(right?.createdAt || 0));
+}
+
+async function saveCustomVoiceRecord(record) {
+  const db = await openCustomVoiceDatabase();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(CUSTOM_VOICE_STORE_NAME, "readwrite");
+    tx.objectStore(CUSTOM_VOICE_STORE_NAME).put(record);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+async function deleteCustomVoiceRecord(id) {
+  const db = await openCustomVoiceDatabase();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(CUSTOM_VOICE_STORE_NAME, "readwrite");
+    tx.objectStore(CUSTOM_VOICE_STORE_NAME).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+async function migrateLegacyCustomVoices() {
+  const result = await getStorageLocal([CUSTOM_VOICES_STORAGE_KEY]);
+  const legacyVoices = Array.isArray(result[CUSTOM_VOICES_STORAGE_KEY]) ? result[CUSTOM_VOICES_STORAGE_KEY] : [];
+  if (legacyVoices.length === 0) {
+    return;
+  }
+
+  const existingVoices = await listCustomVoices();
+  const existingIds = new Set(existingVoices.map((voice) => voice.id));
+
+  for (const legacyVoice of legacyVoices) {
+    if (!legacyVoice?.id || existingIds.has(legacyVoice.id)) {
+      continue;
+    }
+
+    await saveCustomVoiceRecord({
+      id: legacyVoice.id,
+      voiceName: legacyVoice.voiceName,
+      lang: legacyVoice.lang || "en-US",
+      baseVoiceName: legacyVoice.baseVoiceName || "Pocket US Female",
+      fileName: legacyVoice.referenceSample?.name || "reference.wav",
+      mimeType: legacyVoice.referenceSample?.type || "audio/wav",
+      size: legacyVoice.referenceSample?.size || 0,
+      arrayBuffer: dataUrlToArrayBuffer(legacyVoice.referenceSample?.dataUrl || ""),
+      createdAt: legacyVoice.createdAt || Date.now(),
+      filePath: buildCustomVoiceFilePath(legacyVoice.id),
+      source: "custom"
+    });
+  }
+
+  await removeStorageLocal([CUSTOM_VOICES_STORAGE_KEY]);
+}
+
+async function getCustomVoices() {
+  await migrateLegacyCustomVoices();
+  const voices = await listCustomVoices();
+  return voices.map((voice) => ({
+    id: voice.id,
+    voiceName: voice.voiceName,
+    lang: voice.lang || "en-US",
+    baseVoiceName: voice.baseVoiceName || "Pocket US Female",
+    filePath: voice.filePath || buildCustomVoiceFilePath(voice.id),
+    fileName: voice.fileName || "reference.wav",
+    mimeType: voice.mimeType || "audio/wav",
+    size: voice.size || 0,
+    createdAt: voice.createdAt || 0
+  }));
+}
+
+async function renderCustomVoiceList() {
+  const customVoices = await getCustomVoices();
+
+  if (customVoices.length === 0) {
+    cloneRegisteredList.innerHTML = `<div class="field-note">No reference voices added yet.</div>`;
+    return;
+  }
+
+  cloneRegisteredList.innerHTML = customVoices.map((voice) => `
+    <div class="reference-voice-item">
+      <div class="reference-voice-meta">
+        <strong>${escapeHtml(formatVoiceLabel(voice.voiceName))}</strong>
+        <span class="field-note">Base: ${escapeHtml(formatVoiceLabel(voice.baseVoiceName || "Pocket US Female"))} • ${escapeHtml(voice.fileName || "reference.wav")}</span>
+      </div>
+      <button class="btn btn-secondary remove-reference-voice-btn" data-voice-id="${escapeHtml(voice.id)}">Remove</button>
+    </div>
+  `).join("");
+}
+
+async function createClonedVoice() {
+  const cloneName = cloneNameInput.value.trim();
+  const file = cloneWavInput.files?.[0];
+  const baseVoiceName = cloneBaseVoiceSelect.value || "Pocket US Female";
+
+  if (!cloneName) {
+    setCloneStatus("Enter a voice name.", "error");
+    return;
+  }
+
+  if (!file) {
+    setCloneStatus("Select a .wav reference file first.", "error");
+    return;
+  }
+
+  if (!file.name.toLowerCase().endsWith(".wav")) {
+    setCloneStatus("Reference file must be a .wav file.", "error");
+    return;
+  }
+
+  cloneVoiceBtn.disabled = true;
+  setCloneStatus("Saving reference WAV...", "info");
+  addLog(`Saving local reference voice "${cloneName}"`, "info");
+
+  try {
+    const arrayBuffer = await readFileAsArrayBuffer(file);
+    const customVoices = await getCustomVoices();
+    const normalizedName = `Pocket Clone - ${cloneName}`;
+    const id = `reference-${slugify(cloneName) || "voice"}-${Date.now()}`;
+
+    if (customVoices.some((voice) => voice.voiceName === normalizedName)) {
+      throw new Error(`A reference voice named "${normalizedName}" already exists.`);
+    }
+
+    await saveCustomVoiceRecord({
+      id,
+      voiceName: normalizedName,
+      lang: "en-US",
+      baseVoiceName,
+      fileName: file.name,
+      mimeType: file.type || "audio/wav",
+      size: file.size,
+      arrayBuffer,
+      createdAt: Date.now(),
+      filePath: buildCustomVoiceFilePath(id),
+      source: "custom"
+    });
+
+    await sendBackgroundMessage({ type: "voices.refresh" });
+    await renderCustomVoiceList();
+    await loadVoices();
+
+    cloneNameInput.value = "";
+    cloneWavInput.value = "";
+    setCloneStatus(`Added ${normalizedName}.`, "success");
+    addLog(`Registered ${normalizedName} using ${file.name}`, "success");
+  } catch (error) {
+    setCloneStatus(error.message, "error");
+    addLog(`Reference voice save failed: ${error.message}`, "error");
+  } finally {
+    cloneVoiceBtn.disabled = false;
+  }
+}
+
 function testSpeak() {
   const text = testText.value || "Hello, this is a test.";
-  const voice = defaultVoiceSelect.value || "Pocket US Female";
+  const voice = testVoiceSelect.value || defaultVoiceSelect.value || "Pocket US Female";
   const rate = parseFloat(speedSlider.value) || 1.0;
   const pitch = parseFloat(pitchSlider.value) || 1.0;
   const volume = parseFloat(volumeSlider.value) || 1.0;
@@ -357,10 +698,34 @@ volumeSlider.addEventListener("input", () => {
   volumeDisplay.textContent = `${Math.round(parseFloat(volumeSlider.value) * 100)}%`;
 });
 
+themeToggleBtn.addEventListener("click", () => {
+  const nextTheme = document.body.dataset.theme === "dark" ? "light" : "dark";
+  applyTheme(nextTheme);
+  settings.theme = nextTheme;
+  chrome.storage.local.set({ [STORAGE_KEY]: settings });
+  addLog(`Theme set to ${nextTheme}`, "success");
+});
+
 checkStatusBtn.addEventListener("click", checkStatus);
 saveSettingsBtn.addEventListener("click", saveSettings);
 testSpeakBtn.addEventListener("click", testSpeak);
 testStopBtn.addEventListener("click", testStop);
+cloneVoiceBtn.addEventListener("click", createClonedVoice);
+
+cloneRegisteredList.addEventListener("click", async (event) => {
+  const button = event.target.closest(".remove-reference-voice-btn");
+  if (!button) {
+    return;
+  }
+
+  const voiceId = button.dataset.voiceId;
+  await deleteCustomVoiceRecord(voiceId);
+  await sendBackgroundMessage({ type: "voices.refresh" });
+  await renderCustomVoiceList();
+  await loadVoices();
+  setCloneStatus("Reference voice removed.", "success");
+  addLog("Reference voice removed", "success");
+});
 
 clearLogBtn.addEventListener("click", () => {
   logArea.innerHTML = "";
@@ -370,8 +735,10 @@ clearLogBtn.addEventListener("click", () => {
 refreshLogBtn.addEventListener("click", () => {
   addLog("Refreshing...", "info");
   loadVoices();
+  renderCustomVoiceList();
   checkStatus();
   refreshBridgeStatus();
+  logRuntimeSummary();
 });
 
 installBridgeBtn.addEventListener("click", async () => {
@@ -426,17 +793,19 @@ startServerBtn.addEventListener("click", async () => {
 function init() {
   loadExtensionInfo();
   loadSettings();
+  renderBaseVoiceOptions(FALLBACK_VOICE_NAMES);
+  renderCustomVoiceList();
+  setCloneStatus("Ready", "info");
   addLog("Pocket TTS Engine options loaded", "info");
   addLog(`Extension ID: ${chrome.runtime.id}`, "info");
+  logRuntimeSummary();
 
   progressBar.classList.remove("active");
   progressFill.style.width = "0%";
 
-  setTimeout(() => {
-    checkStatus();
-    loadVoices();
-    refreshBridgeStatus();
-  }, 500);
+  loadVoices();
+  refreshBridgeStatus();
+  checkStatus();
 }
 
-init();
+document.addEventListener("DOMContentLoaded", init);
