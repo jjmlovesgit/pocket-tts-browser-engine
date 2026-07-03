@@ -25,6 +25,7 @@ const pitchDisplay = document.getElementById("pitchDisplay");
 const volumeSlider = document.getElementById("volumeSlider");
 const volumeDisplay = document.getElementById("volumeDisplay");
 const testVoiceSelect = document.getElementById("testVoiceSelect");
+const testLocalOnlyCheckbox = document.getElementById("testLocalOnlyCheckbox");
 const testText = document.getElementById("testText");
 const testSpeakBtn = document.getElementById("testSpeakBtn");
 const testStopBtn = document.getElementById("testStopBtn");
@@ -44,9 +45,12 @@ const cloneWavInput = document.getElementById("cloneWavInput");
 const cloneVoiceBtn = document.getElementById("cloneVoiceBtn");
 const cloneStatus = document.getElementById("cloneStatus");
 const cloneRegisteredList = document.getElementById("cloneRegisteredList");
+const localOnlyVoicesCheckbox = document.getElementById("localOnlyVoicesCheckbox");
+const voiceSummary = document.getElementById("voiceSummary");
 
 let settings = {};
 let isSpeaking = false;
+let allDetectedVoices = [];
 
 const FALLBACK_VOICE_NAMES = [
   "Pocket US Female",
@@ -69,6 +73,16 @@ const BACKEND_VOICE_LABELS = {
   "Pocket AU Male": "michael",
   "Pocket US Child": "emma",
   "Pocket UK Child": "isla"
+};
+const VOICE_DISPLAY_LABELS = {
+  "Pocket US Female": "Female",
+  "Pocket US Male": "Male",
+  "Pocket UK Female": "Female",
+  "Pocket UK Male": "Male",
+  "Pocket AU Female": "Male",
+  "Pocket AU Male": "Male",
+  "Pocket US Child": "Child",
+  "Pocket UK Child": "Child"
 };
 
 function sendBackgroundMessage(message) {
@@ -167,8 +181,90 @@ function getBackendVoiceId(voiceName) {
   return "unknown";
 }
 
+function getBackendVoiceDisplayLabel(voiceName) {
+  if (VOICE_DISPLAY_LABELS[voiceName]) {
+    return VOICE_DISPLAY_LABELS[voiceName];
+  }
+
+  const backendVoiceId = getBackendVoiceId(voiceName);
+  return backendVoiceId;
+}
+
 function formatVoiceLabel(voiceName) {
-  return `${voiceName} (${getBackendVoiceId(voiceName)})`;
+  return `${voiceName} (${getBackendVoiceDisplayLabel(voiceName)})`;
+}
+
+function classifyVoice(voice) {
+  const voiceName = typeof voice === "string" ? voice : voice?.voiceName || "";
+
+  if (voiceName.startsWith("Pocket Clone - ")) {
+    return {
+      kind: "local-reference",
+      badge: "Local Reference",
+      detail: "Saved WAV reference voice using native bridge + audiocpp_cli",
+      tooltip: "This voice stays local. Text and audio are processed on this device using the native bridge and audiocpp_cli with your saved WAV reference.",
+      isLocal: true
+    };
+  }
+
+  if (voiceName.startsWith("Pocket ")) {
+    return {
+      kind: "local-server",
+      badge: "Local Server",
+      detail: "Built-in Pocket voice synthesized by local audio.cpp server",
+      tooltip: "This voice stays local. Text and audio are processed by the local audio.cpp server on 127.0.0.1 and are not sent to a cloud TTS API by this extension.",
+      isLocal: true
+    };
+  }
+
+  return {
+    kind: "remote-browser",
+    badge: "Remote Browser",
+    detail: "Non-Pocket browser voice from another engine or provider",
+    tooltip: "This is not one of the Pocket local voices. Another browser engine or provider may handle synthesis, so local-only processing is not guaranteed.",
+    isLocal: false
+  };
+}
+
+function renderAvailableVoices() {
+  const onlyLocal = !!localOnlyVoicesCheckbox?.checked;
+  const visibleVoices = onlyLocal
+    ? allDetectedVoices.filter((voice) => classifyVoice(voice).isLocal)
+    : allDetectedVoices;
+
+  const localCount = allDetectedVoices.filter((voice) => classifyVoice(voice).isLocal).length;
+  const remoteCount = allDetectedVoices.length - localCount;
+  voiceSummary.textContent = `${visibleVoices.length} shown • ${localCount} local • ${remoteCount} remote`;
+
+  if (visibleVoices.length === 0) {
+    voiceList.innerHTML = `<div class="field-note">No voices match the current filter.</div>`;
+    return;
+  }
+
+  voiceList.innerHTML = visibleVoices.map((voice) => {
+    const voiceName = typeof voice === "string" ? voice : voice.voiceName;
+    const voiceLang = typeof voice === "string" ? "n/a" : (voice.lang || "n/a");
+    const source = classifyVoice(voice);
+    const itemClass = source.isLocal ? "voice-item" : "voice-item remote";
+    const badgeClass = source.kind === "local-reference"
+      ? "voice-badge reference"
+      : source.isLocal
+        ? "voice-badge"
+        : "voice-badge remote";
+
+    return `
+      <div class="${itemClass}">
+        <span class="check">${source.isLocal ? "+" : "~"}</span>
+        <div class="voice-meta">
+          <div class="voice-name-row">
+            <strong>${escapeHtml(formatVoiceLabel(voiceName))}</strong>
+            <span class="${badgeClass}" title="${escapeHtml(source.tooltip)}">${escapeHtml(source.badge)}</span>
+          </div>
+          <div class="voice-detail">${escapeHtml(source.detail)} • ${escapeHtml(voiceLang)}</div>
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 async function logRuntimeSummary() {
@@ -187,6 +283,39 @@ function renderVoiceSelectOptions(selectElement, voices) {
     const voiceName = typeof voice === "string" ? voice : voice.voiceName;
     return `<option value="${escapeHtml(voiceName)}">${escapeHtml(formatVoiceLabel(voiceName))}</option>`;
   }).join("");
+}
+
+function getFilteredTestVoices() {
+  const testVoices = allDetectedVoices.length > 0
+    ? allDetectedVoices
+    : FALLBACK_VOICE_NAMES.map((voiceName) => ({ voiceName, lang: "en-US" }));
+
+  if (testLocalOnlyCheckbox?.checked) {
+    return testVoices.filter((voice) => classifyVoice(voice).isLocal);
+  }
+
+  return testVoices;
+}
+
+function renderTestVoiceOptions(preferredVoiceName) {
+  const currentValue = preferredVoiceName || testVoiceSelect.value || settings.defaultVoice || "Pocket US Female";
+  const filteredVoices = getFilteredTestVoices();
+
+  renderVoiceSelectOptions(testVoiceSelect, filteredVoices);
+
+  if (testVoiceSelect.querySelector(`option[value="${currentValue}"]`)) {
+    testVoiceSelect.value = currentValue;
+    return;
+  }
+
+  if (settings.defaultVoice && testVoiceSelect.querySelector(`option[value="${settings.defaultVoice}"]`)) {
+    testVoiceSelect.value = settings.defaultVoice;
+    return;
+  }
+
+  if (filteredVoices[0]) {
+    testVoiceSelect.value = typeof filteredVoices[0] === "string" ? filteredVoices[0] : filteredVoices[0].voiceName;
+  }
 }
 
 async function checkStatus() {
@@ -243,17 +372,19 @@ async function loadVoices() {
       chrome.tts.getVoices(resolve);
     });
 
+    allDetectedVoices = Array.isArray(voices) ? voices.slice().sort((left, right) => {
+      const leftName = left?.voiceName || "";
+      const rightName = right?.voiceName || "";
+      return leftName.localeCompare(rightName);
+    }) : [];
+
     const pocketVoices = voices.filter((voice) => voice.voiceName && voice.voiceName.startsWith("Pocket"));
 
     if (pocketVoices.length === 0) {
-      voiceList.innerHTML = FALLBACK_VOICE_NAMES.map((voiceName) => `
-        <div class="voice-item">
-          <span class="check">?</span>
-          ${escapeHtml(formatVoiceLabel(voiceName))} <span style="color:var(--muted);font-size:12px;">(fallback)</span>
-        </div>
-      `).join("");
+      allDetectedVoices = FALLBACK_VOICE_NAMES.map((voiceName) => ({ voiceName, lang: "en-US" }));
+      renderAvailableVoices();
       renderVoiceSelectOptions(defaultVoiceSelect, FALLBACK_VOICE_NAMES);
-      renderVoiceSelectOptions(testVoiceSelect, FALLBACK_VOICE_NAMES);
+      renderTestVoiceOptions(settings.defaultVoice);
       renderBaseVoiceOptions(FALLBACK_VOICE_NAMES);
       if (settings.defaultVoice && testVoiceSelect.querySelector(`option[value="${settings.defaultVoice}"]`)) {
         testVoiceSelect.value = settings.defaultVoice;
@@ -262,15 +393,10 @@ async function loadVoices() {
       return;
     }
 
-    voiceList.innerHTML = pocketVoices.map((voice) => `
-      <div class="voice-item">
-        <span class="check">+</span>
-        ${escapeHtml(formatVoiceLabel(voice.voiceName))} <span style="color:var(--muted);font-size:12px;">(${escapeHtml(voice.lang || "n/a")})</span>
-      </div>
-    `).join("");
+    renderAvailableVoices();
 
     renderVoiceSelectOptions(defaultVoiceSelect, pocketVoices);
-    renderVoiceSelectOptions(testVoiceSelect, pocketVoices);
+    renderTestVoiceOptions(settings.defaultVoice);
 
     renderBaseVoiceOptions(pocketVoices.filter((voice) => !voice.voiceName.startsWith("Pocket Clone - ")));
     if (settings.defaultVoice && defaultVoiceSelect.querySelector(`option[value="${settings.defaultVoice}"]`)) {
@@ -281,7 +407,9 @@ async function loadVoices() {
     }
     addLog(`Loaded ${pocketVoices.length} Pocket voices`, "success");
   } catch (error) {
-    renderVoiceSelectOptions(testVoiceSelect, FALLBACK_VOICE_NAMES);
+    allDetectedVoices = FALLBACK_VOICE_NAMES.map((voiceName) => ({ voiceName, lang: "en-US" }));
+    renderAvailableVoices();
+    renderTestVoiceOptions(settings.defaultVoice);
     renderBaseVoiceOptions(FALLBACK_VOICE_NAMES);
     addLog(`Failed to load voices: ${error.message}`, "error");
   }
@@ -711,6 +839,10 @@ saveSettingsBtn.addEventListener("click", saveSettings);
 testSpeakBtn.addEventListener("click", testSpeak);
 testStopBtn.addEventListener("click", testStop);
 cloneVoiceBtn.addEventListener("click", createClonedVoice);
+localOnlyVoicesCheckbox.addEventListener("change", renderAvailableVoices);
+testLocalOnlyCheckbox.addEventListener("change", () => {
+  renderTestVoiceOptions();
+});
 
 cloneRegisteredList.addEventListener("click", async (event) => {
   const button = event.target.closest(".remove-reference-voice-btn");

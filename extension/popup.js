@@ -40,6 +40,16 @@ const BACKEND_VOICE_LABELS = {
   'Pocket US Child': 'emma',
   'Pocket UK Child': 'isla'
 };
+const VOICE_DISPLAY_LABELS = {
+  'Pocket US Female': 'Female',
+  'Pocket US Male': 'Male',
+  'Pocket UK Female': 'Female',
+  'Pocket UK Male': 'Male',
+  'Pocket AU Female': 'Male',
+  'Pocket AU Male': 'Male',
+  'Pocket US Child': 'Child',
+  'Pocket UK Child': 'Child'
+};
 
 function addLog(message, type = 'info') {
   const timestamp = new Date().toLocaleTimeString();
@@ -77,8 +87,17 @@ function getBackendVoiceId(voiceName) {
   return 'unknown';
 }
 
+function getBackendVoiceDisplayLabel(voiceName) {
+  if (VOICE_DISPLAY_LABELS[voiceName]) {
+    return VOICE_DISPLAY_LABELS[voiceName];
+  }
+
+  const backendVoiceId = getBackendVoiceId(voiceName);
+  return backendVoiceId;
+}
+
 function formatVoiceLabel(voiceName) {
-  return `${voiceName} (${getBackendVoiceId(voiceName)})`;
+  return `${voiceName} (${getBackendVoiceDisplayLabel(voiceName)})`;
 }
 
 function setStatus(state, message) {

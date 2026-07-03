@@ -323,14 +323,100 @@
 
     .voice-item {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 8px;
-      padding: 4px 0;
+      padding: 10px 12px;
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      background: rgba(74, 108, 247, 0.04);
     }
 
     .voice-item .check {
       color: var(--success);
       font-weight: bold;
+      margin-top: 2px;
+    }
+
+    .voice-item.remote .check {
+      color: var(--warning);
+    }
+
+    .voice-meta {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .voice-name-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .voice-badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      background: rgba(74, 108, 247, 0.12);
+      color: var(--accent-strong);
+    }
+
+    .voice-badge.reference {
+      background: rgba(40, 167, 69, 0.14);
+      color: var(--success);
+    }
+
+    .voice-badge.remote {
+      background: rgba(255, 193, 7, 0.18);
+      color: #9a6b00;
+    }
+
+    body[data-theme="dark"] .voice-badge.remote {
+      color: #ffd76f;
+    }
+
+    .voice-detail {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+      word-break: break-word;
+    }
+
+    .voice-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+
+    .voice-filter {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .voice-filter label,
+    .voice-filter span {
+      cursor: help;
+    }
+
+    .voice-filter input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+    }
+
+    .voice-summary {
+      font-size: 12px;
+      color: var(--muted);
     }
 
     .log-area {
@@ -368,6 +454,15 @@
     .test-voice-row {
       display: grid;
       gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .test-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
       margin-bottom: 12px;
     }
 
@@ -509,6 +604,17 @@
     <details>
       <summary>Available Voices</summary>
       <div class="accordion-content">
+        <div class="voice-toolbar">
+          <label class="voice-filter" for="localOnlyVoicesCheckbox">
+            <input
+              id="localOnlyVoicesCheckbox"
+              type="checkbox"
+              title="Local voices stay on this device. Pocket Local Server voices use audio.cpp on 127.0.0.1, and Pocket Local Reference voices use the native bridge plus audiocpp_cli. Remote Browser voices may use another provider and are not guaranteed to stay local."
+            >
+            <span>Only show local voices</span>
+          </label>
+          <div id="voiceSummary" class="voice-summary">Loading detected voices...</div>
+        </div>
         <div id="voiceList" class="voice-list">
           <div class="voice-item"><span class="check">+</span> Loading voices...</div>
         </div>
@@ -586,8 +692,18 @@
 
   <div class="card accordion-card">
     <details>
-      <summary>Test Speech</summary>
+      <summary>Test Voices</summary>
       <div class="accordion-content">
+        <div class="test-toolbar">
+          <label class="voice-filter" for="testLocalOnlyCheckbox">
+            <input
+              id="testLocalOnlyCheckbox"
+              type="checkbox"
+              title="Local voices stay on this device. Pocket Local Server voices use audio.cpp on 127.0.0.1, and Pocket Local Reference voices use the native bridge plus audiocpp_cli. Remote Browser voices may use another provider and are not guaranteed to stay local."
+            >
+            <span>Only show local voices</span>
+          </label>
+        </div>
         <div class="test-voice-row">
           <label for="testVoiceSelect" class="field-label">Test Voice</label>
           <select id="testVoiceSelect"></select>
