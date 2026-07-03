@@ -14,9 +14,11 @@ const logArea = document.getElementById('logArea');
 const extensionId = document.getElementById('extensionId');
 const openOptionsLink = document.getElementById('openOptionsLink');
 const bridgeExtensionIdInput = document.getElementById('bridgeExtensionIdInput');
+const themeToggleBtn = document.getElementById('themeToggleBtn');
 
 let settings = {};
 let isSpeaking = false;
+const DEFAULT_THEME = 'light';
 
 const FALLBACK_VOICE_NAMES = [
   'Pocket US Female',
@@ -50,6 +52,12 @@ const VOICE_DISPLAY_LABELS = {
   'Pocket US Child': 'Child',
   'Pocket UK Child': 'Child'
 };
+
+function applyTheme(theme) {
+  const normalizedTheme = theme === 'dark' ? 'dark' : 'light';
+  document.body.dataset.theme = normalizedTheme;
+  themeToggleBtn.textContent = normalizedTheme === 'dark' ? 'Light' : 'Dark';
+}
 
 function addLog(message, type = 'info') {
   const timestamp = new Date().toLocaleTimeString();
@@ -169,8 +177,10 @@ function loadSettings() {
       speed: 1.0,
       pitch: 1.0,
       volume: 1.0,
-      bridgeExtensionId: chrome.runtime.id
+      bridgeExtensionId: chrome.runtime.id,
+      theme: DEFAULT_THEME
     };
+    applyTheme(settings.theme || DEFAULT_THEME);
     if (voiceSelect.querySelector(`option[value="${settings.defaultVoice}"]`)) {
       voiceSelect.value = settings.defaultVoice;
     }
@@ -303,6 +313,14 @@ openOptionsLink.addEventListener('click', () => {
 clearLogBtn.addEventListener('click', () => {
   logArea.innerHTML = '';
   addLog('Log cleared', 'info');
+});
+
+themeToggleBtn.addEventListener('click', () => {
+  const nextTheme = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
+  applyTheme(nextTheme);
+  settings.theme = nextTheme;
+  chrome.storage.local.set({ [STORAGE_KEY]: settings });
+  addLog(`Theme set to ${nextTheme}`, 'success');
 });
 
 voiceSelect.addEventListener('change', () => {

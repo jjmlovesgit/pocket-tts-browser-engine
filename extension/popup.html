@@ -12,10 +12,14 @@
     }
     body {
       width: 320px;
-      font-family: 'Segoe UI', Tahoma, sans-serif;
+      font-family: "Segoe UI", Tahoma, sans-serif;
       background: #f8f9fa;
       padding: 16px;
       color: #1a1a2e;
+    }
+    body[data-theme="dark"] {
+      background: #10141c;
+      color: #eef3fb;
     }
     .header {
       display: flex;
@@ -30,6 +34,36 @@
       display: flex;
       align-items: center;
       gap: 6px;
+    }
+    body[data-theme="dark"] .header h3 {
+      color: #eef3fb;
+    }
+    .header-brand-icon {
+      width: 20px;
+      height: 20px;
+      display: block;
+      border-radius: 4px;
+      flex: 0 0 auto;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .theme-toggle {
+      border: 1px solid #d5d8dd;
+      background: white;
+      color: #1a1a2e;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 10px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    body[data-theme="dark"] .theme-toggle {
+      background: #182130;
+      color: #eef3fb;
+      border-color: #33435a;
     }
     .status-badge {
       font-size: 10px;
@@ -55,6 +89,9 @@
       background: #e8eaed;
       margin: 10px 0;
     }
+    body[data-theme="dark"] .divider {
+      background: #273245;
+    }
     .voice-selector {
       margin: 8px 0 12px;
     }
@@ -65,6 +102,9 @@
       display: block;
       margin-bottom: 4px;
     }
+    body[data-theme="dark"] .voice-selector label {
+      color: #9fb0c8;
+    }
     .voice-selector select {
       width: 100%;
       padding: 8px 12px;
@@ -72,7 +112,13 @@
       border: 1px solid #ddd;
       font-size: 13px;
       background: white;
+      color: #1a1a2e;
       cursor: pointer;
+    }
+    body[data-theme="dark"] .voice-selector select {
+      background: #182130;
+      color: #eef3fb;
+      border-color: #33435a;
     }
     .voice-selector select:focus {
       outline: none;
@@ -122,6 +168,13 @@
     .btn-secondary:hover:not(:disabled) {
       background: #d5d8dd;
     }
+    body[data-theme="dark"] .btn-secondary {
+      background: #243246;
+      color: #eef3fb;
+    }
+    body[data-theme="dark"] .btn-secondary:hover:not(:disabled) {
+      background: #2d3d53;
+    }
     .btn-success {
       background: #28a745;
       color: white;
@@ -142,6 +195,9 @@
       color: #666;
       padding: 4px 0;
     }
+    body[data-theme="dark"] .status-row {
+      color: #9fb0c8;
+    }
     .status-row .label {
       font-weight: 500;
     }
@@ -149,6 +205,9 @@
       font-family: monospace;
       font-size: 11px;
       color: #1a1a2e;
+    }
+    body[data-theme="dark"] .status-row .value {
+      color: #eef3fb;
     }
     .status-dot {
       width: 8px;
@@ -164,7 +223,7 @@
     .log-area {
       background: #1a1a2e;
       color: #e0e0e0;
-      font-family: 'Consolas', monospace;
+      font-family: "Consolas", monospace;
       font-size: 10px;
       padding: 10px;
       border-radius: 6px;
@@ -174,6 +233,10 @@
       white-space: pre-wrap;
       word-break: break-all;
       line-height: 1.4;
+    }
+    body[data-theme="dark"] .log-area {
+      background: #0f1622;
+      color: #d7e0ef;
     }
     .log-area .log-error { color: #f8a5b0; }
     .log-area .log-success { color: #8bc34a; }
@@ -185,6 +248,9 @@
       margin-top: 10px;
       font-size: 10px;
       color: #999;
+    }
+    body[data-theme="dark"] .footer {
+      color: #9fb0c8;
     }
     .footer a {
       color: #4a6cf7;
@@ -213,6 +279,10 @@
       margin-top: 10px;
       overflow: hidden;
     }
+    body[data-theme="dark"] .accordion {
+      background: #182130;
+      border-color: #273245;
+    }
     .accordion summary {
       list-style: none;
       cursor: pointer;
@@ -222,16 +292,22 @@
       color: #1a1a2e;
       user-select: none;
     }
+    body[data-theme="dark"] .accordion summary {
+      color: #eef3fb;
+    }
     .accordion summary::-webkit-details-marker {
       display: none;
     }
     .accordion summary::after {
-      content: '+';
+      content: "+";
       float: right;
       color: #666;
     }
+    body[data-theme="dark"] .accordion summary::after {
+      color: #9fb0c8;
+    }
     .accordion[open] summary::after {
-      content: '-';
+      content: "-";
     }
     .accordion-body {
       padding: 0 12px 12px;
@@ -242,8 +318,13 @@
       border-radius: 8px;
       border: 1px solid #ddd;
       font-size: 12px;
-      font-family: 'Consolas', monospace;
+      font-family: "Consolas", monospace;
       margin-bottom: 8px;
+    }
+    body[data-theme="dark"] .accordion-body input {
+      background: #101826;
+      color: #eef3fb;
+      border-color: #33435a;
     }
     .accordion-body input:focus {
       outline: none;
@@ -255,13 +336,22 @@
       line-height: 1.4;
       margin-bottom: 8px;
     }
+    body[data-theme="dark"] .accordion-help {
+      color: #9fb0c8;
+    }
   </style>
 </head>
-<body>
+<body data-theme="light">
 
   <div class="header">
-    <h3>🎯 Pocket TTS</h3>
-    <span id="statusBadge" class="status-badge loading">Loading</span>
+    <h3>
+      <img src="icons/icon48.png" alt="Pocket TTS icon" class="header-brand-icon">
+      <span>Pocket TTS</span>
+    </h3>
+    <div class="header-actions">
+      <button id="themeToggleBtn" class="theme-toggle" type="button">Dark</button>
+      <span id="statusBadge" class="status-badge loading">Loading</span>
+    </div>
   </div>
 
   <div class="status-row">
@@ -272,7 +362,7 @@
   <div class="divider"></div>
 
   <div class="voice-selector">
-    <label for="voiceSelect">🎤 Voice</label>
+    <label for="voiceSelect">Voice</label>
     <select id="voiceSelect">
       <option value="Pocket US Female">Pocket US Female</option>
       <option value="Pocket US Male">Pocket US Male</option>
@@ -281,8 +371,8 @@
   </div>
 
   <div class="btn-group">
-    <button id="speakBtn" class="btn btn-primary">🔊 Speak</button>
-    <button id="stopBtn" class="btn btn-danger">⏹ Stop</button>
+    <button id="speakBtn" class="btn btn-primary">Speak</button>
+    <button id="stopBtn" class="btn btn-danger">Stop</button>
   </div>
 
   <div class="quick-test">
@@ -294,9 +384,9 @@
   <div class="divider"></div>
 
   <div class="btn-group">
-    <button id="refreshBtn" class="btn btn-secondary btn-sm">🔄 Refresh</button>
+    <button id="refreshBtn" class="btn btn-secondary btn-sm">Refresh</button>
     <button id="optionsBtn" class="btn btn-secondary btn-sm">Panel</button>
-    <button id="clearLogBtn" class="btn btn-secondary btn-sm">🗑 Clear</button>
+    <button id="clearLogBtn" class="btn btn-secondary btn-sm">Clear</button>
   </div>
 
   <details class="accordion">
@@ -309,7 +399,7 @@
     </div>
   </details>
 
-  <div id="logArea" class="log-area">🚀 Ready</div>
+  <div id="logArea" class="log-area">Ready</div>
 
   <div class="footer">
     <span id="extensionId">v0.1.0</span>
