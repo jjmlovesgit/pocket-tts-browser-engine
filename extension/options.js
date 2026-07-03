@@ -46,6 +46,7 @@ const cloneVoiceBtn = document.getElementById("cloneVoiceBtn");
 const cloneStatus = document.getElementById("cloneStatus");
 const cloneRegisteredList = document.getElementById("cloneRegisteredList");
 const localOnlyVoicesCheckbox = document.getElementById("localOnlyVoicesCheckbox");
+const voiceCountrySelect = document.getElementById("voiceCountrySelect");
 const voiceSummary = document.getElementById("voiceSummary");
 
 let settings = {};
@@ -226,11 +227,99 @@ function classifyVoice(voice) {
   };
 }
 
+function getVoiceCountryCode(voice) {
+  const source = classifyVoice(voice);
+  if (source.kind === "local-reference") {
+    return "";
+  }
+
+  const voiceLang = typeof voice === "string" ? "" : String(voice?.lang || "").trim();
+  if (!voiceLang) {
+    return "";
+  }
+
+  const segments = voiceLang.split(/[-_]/).filter(Boolean);
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index];
+    if (/^[A-Za-z]{2}$/.test(segment)) {
+      return segment.toUpperCase();
+    }
+  }
+
+  return "";
+}
+
+function getCountryLabel(countryCode) {
+  if (!countryCode) {
+    return "No country";
+  }
+
+  try {
+    if (typeof Intl !== "undefined" && typeof Intl.DisplayNames === "function") {
+      const displayNames = new Intl.DisplayNames(["en"], { type: "region" });
+      const label = displayNames.of(countryCode);
+      if (label) {
+        return label;
+      }
+    }
+  } catch (error) {
+    // Fall through to raw code.
+  }
+
+  return countryCode;
+}
+
+function renderVoiceCountryOptions() {
+  const currentValue = voiceCountrySelect?.value || "";
+  const countryMap = new Map();
+
+  allDetectedVoices.forEach((voice) => {
+    const countryCode = getVoiceCountryCode(voice);
+    if (!countryCode) {
+      return;
+    }
+
+    if (!countryMap.has(countryCode)) {
+      countryMap.set(countryCode, getCountryLabel(countryCode));
+    }
+  });
+
+  const sortedCountries = Array.from(countryMap.entries()).sort((left, right) => left[1].localeCompare(right[1]));
+  voiceCountrySelect.innerHTML = [
+    `<option value="">All countries</option>`,
+    ...sortedCountries.map(([countryCode, countryLabel]) => (
+      `<option value="${escapeHtml(countryCode)}">${escapeHtml(countryLabel)} (${escapeHtml(countryCode)})</option>`
+    ))
+  ].join("");
+
+  if (currentValue && voiceCountrySelect.querySelector(`option[value="${currentValue}"]`)) {
+    voiceCountrySelect.value = currentValue;
+    return;
+  }
+
+  voiceCountrySelect.value = "";
+}
+
 function renderAvailableVoices() {
   const onlyLocal = !!localOnlyVoicesCheckbox?.checked;
-  const visibleVoices = onlyLocal
-    ? allDetectedVoices.filter((voice) => classifyVoice(voice).isLocal)
-    : allDetectedVoices;
+  const selectedCountry = voiceCountrySelect?.value || "";
+  const visibleVoices = allDetectedVoices.filter((voice) => {
+    const source = classifyVoice(voice);
+
+    if (onlyLocal && !source.isLocal) {
+      return false;
+    }
+
+    if (!selectedCountry) {
+      return true;
+    }
+
+    if (source.kind === "local-reference") {
+      return true;
+    }
+
+    return getVoiceCountryCode(voice) === selectedCountry;
+  });
 
   const localCount = allDetectedVoices.filter((voice) => classifyVoice(voice).isLocal).length;
   const remoteCount = allDetectedVoices.length - localCount;
@@ -377,11 +466,13 @@ async function loadVoices() {
       const rightName = right?.voiceName || "";
       return leftName.localeCompare(rightName);
     }) : [];
+    renderVoiceCountryOptions();
 
     const pocketVoices = voices.filter((voice) => voice.voiceName && voice.voiceName.startsWith("Pocket"));
 
     if (pocketVoices.length === 0) {
       allDetectedVoices = FALLBACK_VOICE_NAMES.map((voiceName) => ({ voiceName, lang: "en-US" }));
+      renderVoiceCountryOptions();
       renderAvailableVoices();
       renderVoiceSelectOptions(defaultVoiceSelect, FALLBACK_VOICE_NAMES);
       renderTestVoiceOptions(settings.defaultVoice);
@@ -408,6 +499,7 @@ async function loadVoices() {
     addLog(`Loaded ${pocketVoices.length} Pocket voices`, "success");
   } catch (error) {
     allDetectedVoices = FALLBACK_VOICE_NAMES.map((voiceName) => ({ voiceName, lang: "en-US" }));
+    renderVoiceCountryOptions();
     renderAvailableVoices();
     renderTestVoiceOptions(settings.defaultVoice);
     renderBaseVoiceOptions(FALLBACK_VOICE_NAMES);
@@ -840,6 +932,7 @@ testSpeakBtn.addEventListener("click", testSpeak);
 testStopBtn.addEventListener("click", testStop);
 cloneVoiceBtn.addEventListener("click", createClonedVoice);
 localOnlyVoicesCheckbox.addEventListener("change", renderAvailableVoices);
+voiceCountrySelect.addEventListener("change", renderAvailableVoices);
 testLocalOnlyCheckbox.addEventListener("change", () => {
   renderTestVoiceOptions();
 });
