@@ -1,0 +1,74 @@
+{
+  "manifest_version": 3,
+  "name": "Pocket TTS Engine",
+  "version": "0.1.0",
+  "description": "System-wide high-quality TTS using Pocket TTS (audio.cpp)",
+  "permissions": [
+    "nativeMessaging",
+    "tts",
+    "ttsEngine",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8080/*",
+    "http://localhost:8080/*"
+  ],
+  "tts_engine": {
+    "voices": [
+      {
+        "voice_name": "Pocket US Female",
+        "lang": "en-US",
+        "event_types": ["start", "end", "word", "sentence", "error"]
+      },
+      {
+        "voice_name": "Pocket US Male",
+        "lang": "en-US",
+        "event_types": ["start", "end", "word", "sentence", "error"]
+      },
+      {
+        "voice_name": "Pocket UK Female",
+        "lang": "en-GB",
+        "event_types": ["start", "end", "word", "sentence", "error"]
+      },
+      {
+        "voice_name": "Pocket UK Male",
+        "lang": "en-GB",
+        "event_types": ["start", "end", "word", "sentence", "error"]
+      },
+      {
+        "voice_name": "Pocket AU Female",
+        "lang": "en-AU",
+        "event_types": ["start", "end", "word", "sentence", "error"]
+      },
+      {
+        "voice_name": "Pocket AU Male",
+        "lang": "en-AU",
+        "event_types": ["start", "end", "word", "sentence", "error"]
+      },
+      {
+        "voice_name": "Pocket US Child",
+        "lang": "en-US",
+        "event_types": ["start", "end", "word", "sentence", "error"]
+      },
+      {
+        "voice_name": "Pocket UK Child",
+        "lang": "en-GB",
+        "event_types": ["start", "end", "word", "sentence", "error"]
+      }
+    ]
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Pocket TTS Engine",
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

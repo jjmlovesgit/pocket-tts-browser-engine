@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pocket TTS Engine - Options</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Segoe UI', Tahoma, sans-serif;
+      background: #f0f2f5;
+      padding: 30px;
+      max-width: 800px;
+      margin: 0 auto;
+      color: #1a1a2e;
+    }
+    h1 {
+      font-size: 28px;
+      color: #1a1a2e;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px 28px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      border: 1px solid #e8eaed;
+    }
+    .card h2 {
+      font-size: 18px;
+      margin-bottom: 16px;
+      color: #1a1a2e;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      font-weight: 500;
+    }
+    .status-row.ready {
+      background: #e6f7e6;
+      color: #1e7e34;
+    }
+    .status-row.loading {
+      background: #fff3cd;
+      color: #856404;
+    }
+    .status-row.error {
+      background: #f8d7da;
+      color: #721c24;
+    }
+    .status-row .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .status-row.ready .dot { background: #28a745; }
+    .status-row.loading .dot { background: #ffc107; }
+    .status-row.error .dot { background: #dc3545; }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px 24px;
+      font-size: 14px;
+      padding: 4px 0;
+    }
+    .info-grid .label { color: #666; font-weight: 500; }
+    .info-grid .value { color: #1a1a2e; font-family: monospace; font-size: 13px; }
+
+    select, input[type="range"] {
+      width: 100%;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      font-size: 14px;
+      background: white;
+    }
+    select:focus, input:focus {
+      outline: none;
+      border-color: #4a6cf7;
+      box-shadow: 0 0 0 3px rgba(74,108,247,0.15);
+    }
+    .slider-group {
+      display: grid;
+      grid-template-columns: 1fr 2fr 60px;
+      align-items: center;
+      gap: 12px;
+      margin: 6px 0;
+    }
+    .slider-group label {
+      font-size: 14px;
+      font-weight: 500;
+      color: #444;
+    }
+    .slider-group .value-display {
+      text-align: center;
+      font-weight: 600;
+      font-size: 14px;
+      color: #1a1a2e;
+    }
+    .btn {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-primary {
+      background: #4a6cf7;
+      color: white;
+    }
+    .btn-primary:hover { background: #3a5cd9; }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn-secondary {
+      background: #e8eaed;
+      color: #333;
+    }
+    .btn-secondary:hover { background: #d5d8dd; }
+    .btn-success {
+      background: #28a745;
+      color: white;
+    }
+    .btn-danger {
+      background: #dc3545;
+      color: white;
+    }
+    .btn-danger:hover { background: #c82333; }
+    .btn-group {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .voice-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 16px;
+      font-size: 14px;
+      padding: 8px 0;
+    }
+    .voice-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+    }
+    .voice-item .check {
+      color: #28a745;
+      font-weight: bold;
+    }
+    .log-area {
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 12px;
+      padding: 16px;
+      border-radius: 8px;
+      max-height: 200px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin-top: 8px;
+    }
+    .log-area .log-error { color: #f8a5b0; }
+    .log-area .log-success { color: #8bc34a; }
+    .log-area .log-info { color: #80d4ff; }
+
+    .test-area {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .test-area input[type="text"] {
+      flex: 1;
+      min-width: 200px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      font-size: 14px;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: #e8eaed;
+      border-radius: 4px;
+      margin: 8px 0 4px;
+      overflow: hidden;
+      display: none;
+    }
+    .progress-bar .fill {
+      height: 100%;
+      background: #4a6cf7;
+      border-radius: 4px;
+      width: 0%;
+      transition: width 0.3s;
+    }
+    .progress-bar.active { display: block; }
+
+    @media (max-width: 600px) {
+      body { padding: 16px; }
+      .card { padding: 16px; }
+      .info-grid { grid-template-columns: 1fr; }
+      .voice-list { grid-template-columns: 1fr; }
+      .slider-group { grid-template-columns: 1fr 1fr 50px; }
+      .btn-group { flex-direction: column; }
+      .test-area { flex-direction: column; }
+      .test-area input[type="text"] { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🎯 Pocket TTS Engine</h1>
+  <div class="subtitle">System-wide high-quality TTS using Pocket TTS (audio.cpp)</div>
+
+  <!-- Status Card -->
+  <div class="card">
+    <h2>📊 Status</h2>
+    <div id="statusDisplay" class="status-row loading">
+      <span class="dot"></span>
+      <span id="statusText">Checking server...</span>
+    </div>
+    <div id="progressBar" class="progress-bar">
+      <div id="progressFill" class="fill"></div>
+    </div>
+    <div class="btn-group">
+      <button id="checkStatusBtn" class="btn btn-secondary">🔄 Check Status</button>
+      <button id="installBridgeBtn" class="btn btn-primary">🔧 Install Native Bridge</button>
+      <button id="startServerBtn" class="btn btn-success">▶ Start Server</button>
+    </div>
+    <div style="margin-top: 14px;">
+      <label for="bridgeExtensionIdInput" style="font-weight: 600; display: block; margin-bottom: 6px;">Installer Extension ID</label>
+      <input id="bridgeExtensionIdInput" type="text" placeholder="hijmjnmdgkcjlnhoimfnhkgkdaaeeaha or chrome-extension://.../" style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px;">
+      <div style="margin-top: 6px; color: #666; font-size: 12px;">
+        Paste either the raw ID or the full <code>chrome-extension://.../</code> URL used by the target browser profile.
+      </div>
+    </div>
+  </div>
+
+  <!-- Server Info Card -->
+  <div class="card">
+    <h2>ℹ️ Server Info</h2>
+    <div class="info-grid">
+      <span class="label">Server URL</span>
+      <span class="value" id="serverUrlDisplay">http://127.0.0.1:8080</span>
+      <span class="label">Extension ID</span>
+      <span class="value" id="extensionIdDisplay">loading...</span>
+      <span class="label">Model Status</span>
+      <span class="value" id="modelStatusDisplay">Unknown</span>
+      <span class="label">Backend</span>
+      <span class="value" id="backendDisplay">Unknown</span>
+      <span class="label">Bridge</span>
+      <span class="value" id="bridgeStatusDisplay">Unknown</span>
+    </div>
+  </div>
+
+  <!-- Voices Card -->
+  <div class="card">
+    <h2>🎤 Available Voices</h2>
+    <div id="voiceList" class="voice-list">
+      <div class="voice-item"><span class="check">✓</span> Loading voices...</div>
+    </div>
+  </div>
+
+  <!-- Settings Card -->
+  <div class="card">
+    <h2>⚙️ Settings</h2>
+
+    <div style="margin-bottom: 16px;">
+      <label style="font-weight: 600; display: block; margin-bottom: 6px;">Default Voice</label>
+      <select id="defaultVoiceSelect">
+        <option value="Pocket US Female">Pocket US Female</option>
+        <option value="Pocket US Male">Pocket US Male</option>
+        <option value="Pocket UK Female">Pocket UK Female</option>
+      </select>
+    </div>
+
+    <div class="slider-group">
+      <label>Speed</label>
+      <input type="range" id="speedSlider" min="0.5" max="2.0" step="0.1" value="1.0">
+      <span class="value-display" id="speedDisplay">1.0x</span>
+    </div>
+
+    <div class="slider-group">
+      <label>Pitch</label>
+      <input type="range" id="pitchSlider" min="0.5" max="2.0" step="0.1" value="1.0">
+      <span class="value-display" id="pitchDisplay">1.0x</span>
+    </div>
+
+    <div class="slider-group">
+      <label>Volume</label>
+      <input type="range" id="volumeSlider" min="0.0" max="1.0" step="0.1" value="1.0">
+      <span class="value-display" id="volumeDisplay">100%</span>
+    </div>
+
+    <div style="margin-top: 12px;">
+      <button id="saveSettingsBtn" class="btn btn-primary">💾 Save Settings</button>
+    </div>
+  </div>
+
+  <!-- Test Card -->
+  <div class="card">
+    <h2>🧪 Test Speech</h2>
+    <div class="test-area">
+      <input type="text" id="testText" value="Hello, this is a test of the Pocket TTS engine. It sounds really good!">
+      <button id="testSpeakBtn" class="btn btn-primary">🔊 Speak</button>
+      <button id="testStopBtn" class="btn btn-danger">⏹ Stop</button>
+    </div>
+    <div id="testStatus" style="font-size: 13px; color: #666; margin-top: 8px;">Ready</div>
+  </div>
+
+  <!-- Log Card -->
+  <div class="card">
+    <h2>📋 Log</h2>
+    <div class="btn-group" style="margin-bottom: 8px;">
+      <button id="clearLogBtn" class="btn btn-secondary">Clear Log</button>
+      <button id="refreshLogBtn" class="btn btn-secondary">Refresh</button>
+    </div>
+    <div id="logArea" class="log-area">🚀 Pocket TTS Engine options loaded...</div>
+  </div>
+
+  <div style="text-align: center; font-size: 12px; color: #999; margin-top: 20px;">
+    Pocket TTS Engine v0.1.0
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.tmp
+*.temp
+*.bak
+*.swp
+*.orig
+
+# Logs
+*.log
+logs/
+
+# Local test outputs
+*.wav
+*.mp3
+*.pcm
+*.raw
+*.zip
+
+# Native host / local build outputs
+*.exe
+*.dll
+*.pdb
+*.obj
+*.cache
+bin/
+
+# Dependency / package manager folders
+node_modules/
+dist/
+build/
+
+# Local app and tool state
+.agents/
+.vscode/
+.idea/
