@@ -36,3 +36,6 @@ build/
 .agents/
 .vscode/
 .idea/
+
+# Local scratch notes
+docs/notes.md
