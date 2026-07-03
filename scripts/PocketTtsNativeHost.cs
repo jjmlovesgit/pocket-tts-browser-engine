@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Management;
 using System.Net;
 using System.Text;
 using System.Web.Script.Serialization;
@@ -26,7 +27,7 @@ namespace PocketTtsNativeHost
 
     internal static class Program
     {
-        private const string HostVersion = "1.1.0";
+        private const string HostVersion = "1.2.0";
 
         private static int Main()
         {
@@ -51,6 +52,12 @@ namespace PocketTtsNativeHost
                 if (command == "startServer")
                 {
                     WriteResponse(StartServer(request.serverExePath, request.serverConfigPath));
+                    return 0;
+                }
+
+                if (command == "stopServer")
+                {
+                    WriteResponse(StopServer(request.serverExePath));
                     return 0;
                 }
 
@@ -155,7 +162,7 @@ namespace PocketTtsNativeHost
             var startInfo = new ProcessStartInfo();
             startInfo.FileName = serverExePath;
             startInfo.Arguments = string.Format("--config \"{0}\"", serverConfigPath);
-            startInfo.WorkingDirectory = Path.GetDirectoryName(serverExePath) ?? Environment.CurrentDirectory;
+            startInfo.WorkingDirectory = Path.GetDirectoryName(serverConfigPath) ?? Path.GetDirectoryName(serverExePath) ?? Environment.CurrentDirectory;
             startInfo.UseShellExecute = false;
             startInfo.CreateNoWindow = true;
 
@@ -164,6 +171,86 @@ namespace PocketTtsNativeHost
             startResponse.Add("alreadyRunning", false);
             startResponse.Add("pid", process != null ? process.Id : 0);
             return startResponse;
+        }
+
+        private static string EscapeWmiString(string value)
+        {
+            return (value ?? string.Empty).Replace("\\", "\\\\").Replace("'", "\\'");
+        }
+
+        private static IEnumerable<Tuple<int, string>> FindMatchingServerProcesses(string serverExePath)
+        {
+            var processName = Path.GetFileName(serverExePath);
+            var normalizedPath = Path.GetFullPath(serverExePath ?? string.Empty);
+            var query = string.Format(
+                "SELECT ProcessId, ExecutablePath FROM Win32_Process WHERE Name = '{0}'",
+                EscapeWmiString(processName)
+            );
+
+            using (var searcher = new ManagementObjectSearcher(query))
+            {
+                foreach (ManagementObject process in searcher.Get())
+                {
+                    using (process)
+                    {
+                        var executablePath = process["ExecutablePath"] as string;
+                        if (string.IsNullOrWhiteSpace(executablePath))
+                        {
+                            continue;
+                        }
+
+                        string candidatePath;
+                        try
+                        {
+                            candidatePath = Path.GetFullPath(executablePath);
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+
+                        if (!string.Equals(candidatePath, normalizedPath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        var processId = Convert.ToInt32(process["ProcessId"]);
+                        yield return Tuple.Create(processId, candidatePath);
+                    }
+                }
+            }
+        }
+
+        private static Dictionary<string, object> StopServer(string serverExePath)
+        {
+            if (string.IsNullOrWhiteSpace(serverExePath))
+            {
+                return Response(false, "Server executable path is required.");
+            }
+
+            var stoppedPids = new List<int>();
+
+            foreach (var match in FindMatchingServerProcesses(serverExePath))
+            {
+                try
+                {
+                    using (var process = Process.GetProcessById(match.Item1))
+                    {
+                        stoppedPids.Add(process.Id);
+                        process.Kill();
+                        process.WaitForExit(5000);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return Response(false, string.Format("Failed to stop server process {0}: {1}", match.Item1, ex.Message));
+                }
+            }
+
+            var response = Response(true, null);
+            response.Add("stopped", stoppedPids.Count > 0);
+            response.Add("stoppedPids", stoppedPids.ToArray());
+            return response;
         }
 
         private static Dictionary<string, object> CheckHealth()

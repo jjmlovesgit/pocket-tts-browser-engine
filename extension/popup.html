@@ -220,6 +220,46 @@
     .status-dot.yellow { background: #ffc107; }
     .status-dot.red { background: #dc3545; }
 
+    .launch-progress {
+      width: 100%;
+      height: 6px;
+      background: #e8eaed;
+      border-radius: 999px;
+      overflow: hidden;
+      display: none;
+      margin: 6px 0 2px;
+    }
+    body[data-theme="dark"] .launch-progress {
+      background: #273245;
+    }
+    .launch-progress.active {
+      display: block;
+    }
+    .launch-progress-fill {
+      width: 40%;
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #4a6cf7, #7eb6ff);
+      animation: launch-progress-slide 1.1s ease-in-out infinite;
+    }
+    .launch-progress-note {
+      display: none;
+      font-size: 11px;
+      color: #666;
+      margin-top: 4px;
+    }
+    body[data-theme="dark"] .launch-progress-note {
+      color: #9fb0c8;
+    }
+    .launch-progress-note.active {
+      display: block;
+    }
+
+    @keyframes launch-progress-slide {
+      0% { transform: translateX(-120%); }
+      100% { transform: translateX(280%); }
+    }
+
     .log-area {
       background: #1a1a2e;
       color: #e0e0e0;
@@ -384,10 +424,16 @@
   <div class="divider"></div>
 
   <div class="btn-group">
-    <button id="refreshBtn" class="btn btn-secondary btn-sm">Refresh</button>
+    <button id="startServerBtn" class="btn btn-success btn-sm">Start Server</button>
+    <button id="stopServerBtn" class="btn btn-secondary btn-sm">Stop Server</button>
     <button id="optionsBtn" class="btn btn-secondary btn-sm">Panel</button>
     <button id="clearLogBtn" class="btn btn-secondary btn-sm">Clear</button>
   </div>
+
+  <div id="launchProgress" class="launch-progress">
+    <div class="launch-progress-fill"></div>
+  </div>
+  <div id="launchProgressNote" class="launch-progress-note">Waiting for local server to respond...</div>
 
   <details class="accordion">
     <summary>Add Installer Extension ID</summary>

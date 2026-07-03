@@ -52,6 +52,8 @@ const voiceSummary = document.getElementById("voiceSummary");
 let settings = {};
 let isSpeaking = false;
 let allDetectedVoices = [];
+const SERVER_START_TIMEOUT_MS = 20000;
+const SERVER_START_POLL_MS = 1000;
 
 const FALLBACK_VOICE_NAMES = [
   "Pocket US Female",
@@ -109,6 +111,23 @@ function sendBackgroundMessage(message) {
   });
 }
 
+function getNativeBridgePayload(response) {
+  const payload = response?.response;
+  if (!payload) {
+    throw new Error("No native host response payload was returned.");
+  }
+
+  if (payload.ok !== true) {
+    const message = payload.error || "Native host command failed.";
+    if (/Unsupported command/i.test(message)) {
+      throw new Error(`${message} Reinstall the native bridge to pick up the latest host version.`);
+    }
+    throw new Error(message);
+  }
+
+  return payload;
+}
+
 function getStorageLocal(keys) {
   return new Promise((resolve) => {
     chrome.storage.local.get(keys, resolve);
@@ -144,6 +163,21 @@ chrome.runtime.onMessage.addListener((message) => {
 function setStatus(state, message) {
   statusDisplay.className = `status-row ${state}`;
   statusText.textContent = message;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function setLaunchProgress(active, message = "Waiting for local server to respond...") {
+  progressBar.classList.toggle("active", active);
+  progressFill.style.width = active ? "45%" : "0%";
+  startServerBtn.disabled = active;
+  if (active) {
+    setStatus("loading", message);
+  }
 }
 
 function setCloneStatus(message, type = "info") {
@@ -437,6 +471,18 @@ async function checkStatus() {
     await verifyBridgeRegistration();
     return false;
   }
+}
+
+async function waitForServerHealthy(timeoutMs = SERVER_START_TIMEOUT_MS) {
+  const startedAt = Date.now();
+  while ((Date.now() - startedAt) < timeoutMs) {
+    const healthy = await checkStatus();
+    if (healthy) {
+      return true;
+    }
+    await sleep(SERVER_START_POLL_MS);
+  }
+  return false;
 }
 
 function renderBaseVoiceOptions(voices) {
@@ -850,7 +896,8 @@ async function refreshBridgeStatus() {
 
   try {
     const response = await sendBackgroundMessage({ type: "bridge.ping" });
-    const hostVersion = response.response?.hostVersion || "unknown";
+    const payload = getNativeBridgePayload(response);
+    const hostVersion = payload.hostVersion || "unknown";
     bridgeStatusDisplay.textContent = `Installed (${hostVersion})`;
     addLog(`Bridge ready: ${hostVersion}`, "success");
     return true;
@@ -868,9 +915,10 @@ async function verifyBridgeRegistration() {
       type: "bridge.verifyRegistration",
       extensionId
     });
+    const payload = getNativeBridgePayload(response);
 
-    const chromeStatus = response.response?.chrome;
-    const edgeStatus = response.response?.edge;
+    const chromeStatus = payload.chrome;
+    const edgeStatus = payload.edge;
     const chromeRegistered = !!chromeStatus?.registered;
     const edgeRegistered = !!edgeStatus?.registered;
 
@@ -994,24 +1042,31 @@ bridgeExtensionIdInput.addEventListener("blur", () => {
 
 startServerBtn.addEventListener("click", async () => {
   addLog("Starting server through native bridge...", "info");
+  setLaunchProgress(true, "Launching local server...");
 
   try {
     const response = await sendBackgroundMessage({
       type: "bridge.startServer"
     });
-    const result = response.response || {};
+    const result = getNativeBridgePayload(response);
     if (result.alreadyRunning) {
       addLog("Server is already running", "success");
     } else {
       addLog(`Server launch requested (pid: ${result.pid || "n/a"})`, "success");
     }
-
-    setTimeout(() => {
-      checkStatus();
-    }, 1200);
+    progressFill.style.width = "75%";
+    const healthy = await waitForServerHealthy();
+    if (healthy) {
+      addLog("Server became healthy", "success");
+    } else {
+      addLog("Server launch timed out before health check passed", "error");
+      setStatus("error", "Launch timeout");
+    }
   } catch (error) {
     addLog(`Bridge start failed: ${error.message}`, "error");
     addLog("Run the install script first, then retry.", "info");
+  } finally {
+    setLaunchProgress(false);
   }
 });
 

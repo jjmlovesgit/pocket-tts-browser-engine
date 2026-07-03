@@ -7,7 +7,8 @@ const serverStatus = document.getElementById('serverStatus');
 const voiceSelect = document.getElementById('voiceSelect');
 const speakBtn = document.getElementById('speakBtn');
 const stopBtn = document.getElementById('stopBtn');
-const refreshBtn = document.getElementById('refreshBtn');
+const startServerBtn = document.getElementById('startServerBtn');
+const stopServerBtn = document.getElementById('stopServerBtn');
 const optionsBtn = document.getElementById('optionsBtn');
 const clearLogBtn = document.getElementById('clearLogBtn');
 const logArea = document.getElementById('logArea');
@@ -15,10 +16,16 @@ const extensionId = document.getElementById('extensionId');
 const openOptionsLink = document.getElementById('openOptionsLink');
 const bridgeExtensionIdInput = document.getElementById('bridgeExtensionIdInput');
 const themeToggleBtn = document.getElementById('themeToggleBtn');
+const launchProgress = document.getElementById('launchProgress');
+const launchProgressNote = document.getElementById('launchProgressNote');
+const quickTestButtons = Array.from(document.querySelectorAll('.quick-test .btn'));
 
 let settings = {};
 let isSpeaking = false;
 const DEFAULT_THEME = 'light';
+const SERVER_START_TIMEOUT_MS = 20000;
+const SERVER_START_POLL_MS = 1000;
+let isServerLaunching = false;
 
 const FALLBACK_VOICE_NAMES = [
   'Pocket US Female',
@@ -57,6 +64,46 @@ function applyTheme(theme) {
   const normalizedTheme = theme === 'dark' ? 'dark' : 'light';
   document.body.dataset.theme = normalizedTheme;
   themeToggleBtn.textContent = normalizedTheme === 'dark' ? 'Light' : 'Dark';
+}
+
+function sendBackgroundMessage(message) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+
+      if (!response) {
+        reject(new Error('No response from background service worker.'));
+        return;
+      }
+
+      if (!response.ok) {
+        reject(new Error(response.error || 'Unknown background error.'));
+        return;
+      }
+
+      resolve(response);
+    });
+  });
+}
+
+function getNativeBridgePayload(response) {
+  const payload = response?.response;
+  if (!payload) {
+    throw new Error('No native host response payload was returned.');
+  }
+
+  if (payload.ok !== true) {
+    const message = payload.error || 'Native host command failed.';
+    if (/Unsupported command/i.test(message)) {
+      throw new Error(`${message} Reinstall the native bridge to pick up the latest host version.`);
+    }
+    throw new Error(message);
+  }
+
+  return payload;
 }
 
 function addLog(message, type = 'info') {
@@ -122,6 +169,34 @@ function setStatus(state, message) {
   }
 }
 
+function setServerStoppedState() {
+  statusBadge.textContent = 'START SERVER';
+  statusBadge.className = 'status-badge loading';
+  serverStatus.textContent = 'Not running';
+  statusDot.className = 'status-dot red';
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function setLaunchProgress(active, message = 'Waiting for local server to respond...') {
+  isServerLaunching = active;
+  launchProgress.classList.toggle('active', active);
+  launchProgressNote.classList.toggle('active', active);
+  launchProgressNote.textContent = message;
+  startServerBtn.disabled = active;
+  stopServerBtn.disabled = active;
+  speakBtn.disabled = active || isSpeaking;
+  stopBtn.disabled = active;
+  voiceSelect.disabled = active;
+  quickTestButtons.forEach((button) => {
+    button.disabled = active;
+  });
+}
+
 async function checkStatus() {
   setStatus('loading', 'Checking...');
   try {
@@ -138,10 +213,23 @@ async function checkStatus() {
     addLog(`Server error: ${response.status}`, 'error');
     return false;
   } catch (error) {
-    setStatus('error', 'Not running');
+    setServerStoppedState();
+    addLog('Server is not running. Click Start Server.', 'info');
     addLog(`Server not reachable: ${error.message}`, 'error');
     return false;
   }
+}
+
+async function waitForServerHealthy(timeoutMs = SERVER_START_TIMEOUT_MS) {
+  const startedAt = Date.now();
+  while ((Date.now() - startedAt) < timeoutMs) {
+    const healthy = await checkStatus();
+    if (healthy) {
+      return true;
+    }
+    await sleep(SERVER_START_POLL_MS);
+  }
+  return false;
 }
 
 async function loadVoices() {
@@ -156,17 +244,26 @@ async function loadVoices() {
       voiceSelect.innerHTML = FALLBACK_VOICE_NAMES.map((voiceName) => `
         <option value="${escapeHtml(voiceName)}">${escapeHtml(formatVoiceLabel(voiceName))}</option>
       `).join('');
+      if (settings.defaultVoice && voiceSelect.querySelector(`option[value="${settings.defaultVoice}"]`)) {
+        voiceSelect.value = settings.defaultVoice;
+      }
       addLog('Using fallback voice list', 'info');
-      return;
+      return 0;
     }
 
     voiceSelect.innerHTML = pocketVoices.map((voice) => `
       <option value="${escapeHtml(voice.voiceName)}">${escapeHtml(formatVoiceLabel(voice.voiceName))}</option>
     `).join('');
 
+    if (settings.defaultVoice && voiceSelect.querySelector(`option[value="${settings.defaultVoice}"]`)) {
+      voiceSelect.value = settings.defaultVoice;
+    }
+
     addLog(`Loaded ${pocketVoices.length} Pocket voices`, 'success');
+    return pocketVoices.length;
   } catch (error) {
     addLog(`Failed to load voices: ${error.message}`, 'error');
+    return 0;
   }
 }
 
@@ -207,6 +304,11 @@ function normalizeExtensionId(value) {
 }
 
 function speak(text) {
+  if (isServerLaunching) {
+    addLog('Wait for server startup to finish before testing speech.', 'info');
+    return;
+  }
+
   if (isSpeaking) {
     chrome.tts.stop();
     isSpeaking = false;
@@ -238,16 +340,25 @@ function speak(text) {
         isSpeaking = false;
         speakBtn.disabled = false;
         speakBtn.textContent = 'Speak';
+        if (isServerLaunching) {
+          speakBtn.disabled = true;
+        }
         addLog('Speech complete', 'success');
       } else if (event.type === 'error') {
         isSpeaking = false;
         speakBtn.disabled = false;
         speakBtn.textContent = 'Speak';
+        if (isServerLaunching) {
+          speakBtn.disabled = true;
+        }
         addLog(`Speech error: ${event.errorMessage}`, 'error');
       } else if (event.type === 'interrupted' || event.type === 'cancelled') {
         isSpeaking = false;
         speakBtn.disabled = false;
         speakBtn.textContent = 'Speak';
+        if (isServerLaunching) {
+          speakBtn.disabled = true;
+        }
         addLog('Speech stopped', 'info');
       }
     }
@@ -296,10 +407,69 @@ document.querySelectorAll('.quick-test .btn').forEach((btn) => {
   });
 });
 
-refreshBtn.addEventListener('click', () => {
-  addLog('Refreshing...', 'info');
-  checkStatus();
-  loadVoices();
+startServerBtn.addEventListener('click', async () => {
+  addLog('Starting server through native bridge...', 'info');
+  setLaunchProgress(true, 'Launching local Pocket TTS server...');
+
+  try {
+    const response = await sendBackgroundMessage({
+      type: 'bridge.startServer'
+    });
+    const result = getNativeBridgePayload(response);
+    if (result.alreadyRunning) {
+      addLog('Server is already running', 'success');
+    } else {
+      addLog(`Server launch requested (pid: ${result.pid || 'n/a'})`, 'success');
+    }
+
+    setLaunchProgress(true, 'Waiting for server health check...');
+    const healthy = await waitForServerHealthy();
+    if (healthy) {
+      setLaunchProgress(true, 'Refreshing Pocket voice registrations...');
+      await sendBackgroundMessage({ type: 'voices.refresh' });
+      await sleep(250);
+      const voiceCount = await loadVoices();
+      if (voiceCount > 0) {
+        addLog('Pocket voices refreshed after startup', 'success');
+      } else {
+        addLog('Server is healthy, but Pocket voices are still loading', 'info');
+      }
+      addLog('Server became healthy', 'success');
+    } else {
+      addLog('Server launch timed out before health check passed', 'error');
+      setStatus('error', 'Launch timeout');
+    }
+  } catch (error) {
+    addLog(`Bridge start failed: ${error.message}`, 'error');
+  } finally {
+    setLaunchProgress(false);
+  }
+});
+
+stopServerBtn.addEventListener('click', async () => {
+  addLog('Stopping server through native bridge...', 'info');
+  setLaunchProgress(true, 'Stopping local Pocket TTS server...');
+
+  try {
+    const response = await sendBackgroundMessage({
+      type: 'bridge.stopServer'
+    });
+    const result = getNativeBridgePayload(response);
+    const stoppedPids = Array.isArray(result.stoppedPids) ? result.stoppedPids : [];
+
+    if (result.stopped) {
+      addLog(`Server stopped (${stoppedPids.length > 0 ? `pid ${stoppedPids.join(', ')}` : 'matched process'})`, 'success');
+    } else {
+      addLog('No matching server process was running', 'info');
+    }
+
+    await sleep(400);
+    await checkStatus();
+  } catch (error) {
+    addLog(`Bridge stop failed: ${error.message}`, 'error');
+  } finally {
+    setLaunchProgress(false);
+  }
 });
 
 optionsBtn.addEventListener('click', () => {

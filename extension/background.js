@@ -1024,6 +1024,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: true, response });
         return;
       }
+      case "bridge.stopServer": {
+        const response = await sendNativeCommand({
+          command: "stopServer",
+          serverExePath: message.serverExePath || DEFAULT_SERVER_EXE_PATH
+        });
+        sendResponse({ ok: true, response });
+        return;
+      }
       case "voices.refresh":
         await refreshRegisteredVoices();
         sendResponse({ ok: true });

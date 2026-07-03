@@ -20,6 +20,47 @@ This project has four main parts:
 - Plays speech entirely locally using Pocket TTS through `audio.cpp`.
 - Supports Microsoft Read Aloud style chunked `onSpeak` traffic with queued fallback playback.
 
+## Prerequisites
+
+Before this extension can speak, you need a working local `audio.cpp` build on the same Windows machine.
+
+Required pieces:
+
+- `audiocpp_server.exe`
+- `audiocpp_cli.exe`
+- Pocket TTS model files
+- a valid `server.json`
+
+The current extension defaults expect these paths:
+
+```text
+C:\Projects\audio.cpp\build\windows-cuda-release\bin\audiocpp_server.exe
+C:\Projects\audio.cpp\build\windows-cuda-release\bin\audiocpp_cli.exe
+C:\Projects\audio.cpp\server.json
+C:\Projects\audio.cpp\models\pocket-tts
+```
+
+Important:
+
+- `audio.cpp` produces both the server and the CLI from the same build tree.
+- Built-in Pocket voices use the HTTP server on `127.0.0.1:8080`.
+- Custom reference voices use `audiocpp_cli.exe` through the native bridge.
+- This repo does not build `audio.cpp` for you. It expects those binaries and models to already exist.
+
+## Runtime Model
+
+There are two local synthesis paths:
+
+1. Built-in Pocket voices
+
+- Browser TTS request -> extension -> local `audiocpp_server.exe` over HTTP
+
+2. Custom reference voices
+
+- Browser TTS request -> extension -> native messaging host -> local `audiocpp_cli.exe --voice-ref`
+
+Both paths are local-only when you are using Pocket voices from this extension.
+
 ## Architecture
 
 ### Extension
@@ -86,31 +127,43 @@ That is why the extension now includes:
 
 ## Installation
 
-### 1. Start or prepare `audio.cpp`
+### 1. Build or obtain `audio.cpp`
 
-Expected server path:
+Make sure your `audio.cpp` checkout already contains:
 
-```text
-C:\Projects\audio.cpp\build\windows-cuda-release\bin\audiocpp_server.exe
+- `build\windows-cuda-release\bin\audiocpp_server.exe`
+- `build\windows-cuda-release\bin\audiocpp_cli.exe`
+- `models\pocket-tts\...`
+- `server.json`
+
+If your current workflow is:
+
+```powershell
+(venv) (base) PS C:\Projects\audio.cpp> .\build\windows-cuda-release\bin\audiocpp_server.exe --config server.json
 ```
 
-Expected config path:
+that is fine for manual launch and validation.
 
-```text
-C:\Projects\audio.cpp\server.json
+### 2. Verify the server can run locally
+
+Manual validation command:
+
+```powershell
+cd C:\Projects\audio.cpp
+.\build\windows-cuda-release\bin\audiocpp_server.exe --config server.json
 ```
 
-Expected API endpoint:
+Expected listening endpoint:
 
 ```text
 http://127.0.0.1:8080
 ```
 
-### 2. Load the extension unpacked
+### 3. Load the extension unpacked
 
 Load [extension](C:/Projects/pocket-tts-engine/extension) as an unpacked extension in Chrome or Edge.
 
-### 3. Install the native bridge
+### 4. Install the native bridge
 
 Run:
 
@@ -123,9 +176,18 @@ You can also use the extension UI to generate the install command from either:
 - a raw extension ID
 - a full `chrome-extension://.../` URL
 
-### 4. Reload the extension
+### 5. Reload the extension
 
 Reload the unpacked extension after installing or updating the native bridge.
+
+### 6. Open the side panel and verify status
+
+The options UI should confirm:
+
+- server health
+- bridge install status
+- Chrome and Edge native host registration
+- loaded Pocket voices
 
 ## Using The UI
 
@@ -150,13 +212,49 @@ The side panel uses [options.html](C:/Projects/pocket-tts-engine/extension/optio
 - native bridge install command generation
 - server start via native bridge
 
+## Start Server Button
+
+The extension includes a `Start Server` button in the options UI.
+
+What it does:
+
+- calls the native messaging host
+- launches `audiocpp_server.exe --config <server.json>`
+- does not require an activated Python `venv`
+- does not require an activated Conda `base` environment
+
+Why that works:
+
+- the extension is starting the compiled `.exe`, not a Python entry point
+- the native host uses `Process.Start(...)` directly
+
+Important caveat:
+
+- the native host currently sets the process working directory to the server executable folder, not the `audio.cpp` repo root
+
+That means the button is reliable when:
+
+- `server.json` is valid at the configured absolute path, and
+- any paths inside `server.json` are absolute, or otherwise resolve correctly from the server executable location
+
+Manual launch from `C:\Projects\audio.cpp` may still be safer when:
+
+- `server.json` uses relative model paths that assume the repo root as the working directory
+- you are still iterating on your `audio.cpp` layout
+
+In other words:
+
+- no, the server does not need `(venv) (base)` specifically for runtime
+- yes, working-directory-sensitive configs can still matter
+- the current UI button is useful, but path handling should be considered part of the prerequisite setup
+
 ## Verification Checklist
 
 When the stack is working, the UI should show logs like:
 
 - `Loaded 8 Pocket voices`
 - `Server is healthy`
-- `Bridge ready: 1.0.0`
+- `Bridge ready: 1.x.x`
 - `Bridge registered in Chrome and Edge`
 
 And speech requests should produce playback instead of immediate `Speech stopped`.
@@ -189,3 +287,4 @@ pocket-tts-engine/
 - This repo contains the browser-side engine and native bridge pieces.
 - The Pocket TTS model files and `audio.cpp` server binary live outside this repo.
 - The current implementation is optimized for fully local use on Windows with Chrome/Edge.
+- If you want a more portable install later, the next improvement is making the server, CLI, config, and model paths configurable instead of assuming `C:\Projects\audio.cpp`.

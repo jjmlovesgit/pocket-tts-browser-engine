@@ -22,7 +22,7 @@ Add-Type `
   -Language CSharp `
   -OutputAssembly $exePath `
   -OutputType ConsoleApplication `
-  -ReferencedAssemblies @("System.dll", "System.Core.dll", "System.Web.Extensions.dll")
+  -ReferencedAssemblies @("System.dll", "System.Core.dll", "System.Management.dll", "System.Web.Extensions.dll")
 
 $manifest = @{
     name = $HostName
