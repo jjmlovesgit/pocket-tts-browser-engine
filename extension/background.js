@@ -13,6 +13,7 @@ const CUSTOM_VOICE_DB_NAME = "pocket-tts-custom-voices-db";
 const CUSTOM_VOICE_STORE_NAME = "voices";
 const CUSTOM_VOICE_DB_VERSION = 1;
 const CUSTOM_VOICE_FILE_PREFIX = "custom-voice:";
+const SUPPORTED_TTS_EVENT_TYPES = ["start", "end", "error"];
 
 const VOICE_MAP = {
   "Pocket US Female": "alba",
@@ -26,14 +27,14 @@ const VOICE_MAP = {
 };
 
 const BUILTIN_VOICES = [
-  { voiceName: "Pocket US Female", lang: "en-US", eventTypes: ["start", "end", "word", "sentence", "error"] },
-  { voiceName: "Pocket US Male", lang: "en-US", eventTypes: ["start", "end", "word", "sentence", "error"] },
-  { voiceName: "Pocket UK Female", lang: "en-GB", eventTypes: ["start", "end", "word", "sentence", "error"] },
-  { voiceName: "Pocket UK Male", lang: "en-GB", eventTypes: ["start", "end", "word", "sentence", "error"] },
-  { voiceName: "Pocket AU Female", lang: "en-AU", eventTypes: ["start", "end", "word", "sentence", "error"] },
-  { voiceName: "Pocket AU Male", lang: "en-AU", eventTypes: ["start", "end", "word", "sentence", "error"] },
-  { voiceName: "Pocket US Child", lang: "en-US", eventTypes: ["start", "end", "word", "sentence", "error"] },
-  { voiceName: "Pocket UK Child", lang: "en-GB", eventTypes: ["start", "end", "word", "sentence", "error"] }
+  { voiceName: "Pocket US Female", lang: "en-US", eventTypes: SUPPORTED_TTS_EVENT_TYPES },
+  { voiceName: "Pocket US Male", lang: "en-US", eventTypes: SUPPORTED_TTS_EVENT_TYPES },
+  { voiceName: "Pocket UK Female", lang: "en-GB", eventTypes: SUPPORTED_TTS_EVENT_TYPES },
+  { voiceName: "Pocket UK Male", lang: "en-GB", eventTypes: SUPPORTED_TTS_EVENT_TYPES },
+  { voiceName: "Pocket AU Female", lang: "en-AU", eventTypes: SUPPORTED_TTS_EVENT_TYPES },
+  { voiceName: "Pocket AU Male", lang: "en-AU", eventTypes: SUPPORTED_TTS_EVENT_TYPES },
+  { voiceName: "Pocket US Child", lang: "en-US", eventTypes: SUPPORTED_TTS_EVENT_TYPES },
+  { voiceName: "Pocket UK Child", lang: "en-GB", eventTypes: SUPPORTED_TTS_EVENT_TYPES }
 ];
 
 let activeRequestId = 0;
@@ -42,8 +43,11 @@ let creatingOffscreenDocument = null;
 let fallbackQueue = Promise.resolve();
 let fallbackGeneration = 0;
 let supportedMappedVoicesCache = null;
+let lastFallbackUtteranceMeta = null;
+const pendingFallbackUtteranceKeys = new Set();
 
 const VOICE_PROBE_TEXT = "Pocket voice probe.";
+const FALLBACK_DUPLICATE_WINDOW_MS = 4000;
 
 function emitDebugLog(message, detail = null) {
   const entry = {
@@ -56,6 +60,60 @@ function emitDebugLog(message, detail = null) {
   chrome.runtime.sendMessage({ type: "debug.log", entry }, () => {
     void chrome.runtime.lastError;
   });
+}
+
+function getUtterancePreview(utterance) {
+  const normalized = String(utterance || "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= 120) {
+    return normalized;
+  }
+  return `${normalized.slice(0, 117)}...`;
+}
+
+function getNormalizedUtterance(utterance) {
+  return String(utterance || "").replace(/\s+/g, " ").trim();
+}
+
+function buildFallbackUtteranceKey(utterance, options) {
+  const normalizedUtterance = getNormalizedUtterance(utterance);
+  const voiceName = String(options?.voiceName || "");
+  const rate = clamp(options?.rate, 0.1, 10, 1);
+  const pitch = clamp(options?.pitch, 0, 2, 1);
+  const volume = clamp(options?.volume, 0, 1, 1);
+  return JSON.stringify({
+    normalizedUtterance,
+    voiceName,
+    rate,
+    pitch,
+    volume
+  });
+}
+
+function shouldSuppressFallbackDuplicate(utterance, options) {
+  const key = buildFallbackUtteranceKey(utterance, options);
+  const now = Date.now();
+  if (pendingFallbackUtteranceKeys.has(key)) {
+    lastFallbackUtteranceMeta = {
+      key,
+      timestampMs: now
+    };
+    return { suppress: true, key, reason: "already-pending" };
+  }
+
+  const isDuplicate = !!lastFallbackUtteranceMeta
+    && lastFallbackUtteranceMeta.key === key
+    && (now - lastFallbackUtteranceMeta.timestampMs) <= FALLBACK_DUPLICATE_WINDOW_MS;
+
+  lastFallbackUtteranceMeta = {
+    key,
+    timestampMs: now
+  };
+
+  return {
+    suppress: isDuplicate,
+    key,
+    reason: isDuplicate ? "recent-duplicate" : ""
+  };
 }
 
 function sendNativeCommand(message) {
@@ -263,7 +321,7 @@ async function refreshRegisteredVoices() {
     ...registeredCustomVoices.map((voice) => ({
       voiceName: voice.voiceName,
       lang: voice.lang || "en-US",
-      eventTypes: ["start", "end", "word", "sentence", "error"]
+      eventTypes: SUPPORTED_TTS_EVENT_TYPES
     }))
   ]);
   emitDebugLog("Voices updated", {
@@ -775,26 +833,56 @@ async function synthesizeWavAudio(utterance, options) {
 
 async function fallbackSpeakListener(utterance, options, sendTtsEvent) {
   const enqueue = options.enqueue !== false;
+  const utterancePreview = getUtterancePreview(utterance);
+  const duplicateCheck = enqueue
+    ? shouldSuppressFallbackDuplicate(utterance, options)
+    : { suppress: false, key: "", reason: "" };
 
   emitDebugLog("onSpeak fallback invoked", {
     utteranceLength: utterance.length,
+    utterancePreview,
     voiceName: options.voiceName,
     enqueue,
     note: "Using offscreen playback path."
   });
 
+  if (enqueue && duplicateCheck.suppress) {
+    emitDebugLog("Fallback duplicate utterance suppressed", {
+      utteranceLength: utterance.length,
+      utterancePreview,
+      voiceName: options.voiceName,
+      windowMs: FALLBACK_DUPLICATE_WINDOW_MS,
+      reason: duplicateCheck.reason
+    });
+
+    sendTtsEvent({
+      type: "start",
+      charIndex: 0
+    });
+    sendTtsEvent({
+      type: "end",
+      charIndex: utterance.length
+    });
+    return;
+  }
+
   if (!enqueue) {
     fallbackGeneration += 1;
+    lastFallbackUtteranceMeta = null;
+    pendingFallbackUtteranceKeys.clear();
     sendRuntimeMessage({ type: "offscreen.stopAudio" }).catch(() => {});
   }
 
   const requestGeneration = fallbackGeneration;
+  const utteranceKey = duplicateCheck.key || buildFallbackUtteranceKey(utterance, options);
+  pendingFallbackUtteranceKeys.add(utteranceKey);
 
   const task = async () => {
     try {
       if (requestGeneration !== fallbackGeneration && enqueue) {
         emitDebugLog("Fallback speech skipped", {
           utteranceLength: utterance.length,
+          utterancePreview,
           reason: "queue invalidated before start"
         });
         return;
@@ -810,6 +898,7 @@ async function fallbackSpeakListener(utterance, options, sendTtsEvent) {
       if (requestGeneration !== fallbackGeneration && enqueue) {
         emitDebugLog("Fallback speech skipped", {
           utteranceLength: utterance.length,
+          utterancePreview,
           reason: "queue invalidated after fetch"
         });
         return;
@@ -828,6 +917,7 @@ async function fallbackSpeakListener(utterance, options, sendTtsEvent) {
       }
 
       emitDebugLog("Offscreen playback completed", {
+        utterancePreview,
         byteLength: wavBuffer.byteLength
       });
 
@@ -837,6 +927,7 @@ async function fallbackSpeakListener(utterance, options, sendTtsEvent) {
       });
     } catch (error) {
       emitDebugLog("Fallback speech failed", {
+        utterancePreview,
         error: error instanceof Error ? error.message : String(error)
       });
 
@@ -844,6 +935,8 @@ async function fallbackSpeakListener(utterance, options, sendTtsEvent) {
         type: "error",
         errorMessage: error instanceof Error ? error.message : String(error)
       });
+    } finally {
+      pendingFallbackUtteranceKeys.delete(utteranceKey);
     }
   };
 
@@ -884,6 +977,8 @@ chrome.ttsEngine.onStop.addListener(() => {
   activeRequestId += 1;
   fallbackGeneration += 1;
   fallbackQueue = Promise.resolve();
+  lastFallbackUtteranceMeta = null;
+  pendingFallbackUtteranceKeys.clear();
   emitDebugLog("TTS stop received", { activeRequestId });
 
   if (activeAbortController) {

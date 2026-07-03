@@ -21,42 +21,42 @@
       {
         "voice_name": "Pocket US Female",
         "lang": "en-US",
-        "event_types": ["start", "end", "word", "sentence", "error"]
+        "event_types": ["start", "end", "error"]
       },
       {
         "voice_name": "Pocket US Male",
         "lang": "en-US",
-        "event_types": ["start", "end", "word", "sentence", "error"]
+        "event_types": ["start", "end", "error"]
       },
       {
         "voice_name": "Pocket UK Female",
         "lang": "en-GB",
-        "event_types": ["start", "end", "word", "sentence", "error"]
+        "event_types": ["start", "end", "error"]
       },
       {
         "voice_name": "Pocket UK Male",
         "lang": "en-GB",
-        "event_types": ["start", "end", "word", "sentence", "error"]
+        "event_types": ["start", "end", "error"]
       },
       {
         "voice_name": "Pocket AU Female",
         "lang": "en-AU",
-        "event_types": ["start", "end", "word", "sentence", "error"]
+        "event_types": ["start", "end", "error"]
       },
       {
         "voice_name": "Pocket AU Male",
         "lang": "en-AU",
-        "event_types": ["start", "end", "word", "sentence", "error"]
+        "event_types": ["start", "end", "error"]
       },
       {
         "voice_name": "Pocket US Child",
         "lang": "en-US",
-        "event_types": ["start", "end", "word", "sentence", "error"]
+        "event_types": ["start", "end", "error"]
       },
       {
         "voice_name": "Pocket UK Child",
         "lang": "en-GB",
-        "event_types": ["start", "end", "word", "sentence", "error"]
+        "event_types": ["start", "end", "error"]
       }
     ]
   },
