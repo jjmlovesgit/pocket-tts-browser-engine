@@ -5,6 +5,7 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Web.Script.Serialization;
+using Microsoft.Win32;
 
 namespace PocketTtsNativeHost
 {
@@ -13,6 +14,7 @@ namespace PocketTtsNativeHost
         public string command { get; set; }
         public string serverExePath { get; set; }
         public string serverConfigPath { get; set; }
+        public string extensionId { get; set; }
     }
 
     internal static class Program
@@ -48,6 +50,12 @@ namespace PocketTtsNativeHost
                 if (command == "health")
                 {
                     WriteResponse(CheckHealth());
+                    return 0;
+                }
+
+                if (command == "verifyRegistration")
+                {
+                    WriteResponse(VerifyRegistration(request.extensionId));
                     return 0;
                 }
 
@@ -160,6 +168,59 @@ namespace PocketTtsNativeHost
                 healthResponse.Add("statusCode", (int)response.StatusCode);
                 healthResponse.Add("body", body);
                 return healthResponse;
+            }
+        }
+
+        private static Dictionary<string, object> VerifyRegistration(string extensionId)
+        {
+            if (string.IsNullOrWhiteSpace(extensionId))
+            {
+                return Response(false, "Extension ID is required.");
+            }
+
+            var expectedOrigin = string.Format("chrome-extension://{0}/", extensionId.Trim());
+            var response = Response(true, null);
+            response.Add("expectedOrigin", expectedOrigin);
+            response.Add("chrome", ReadRegistration(@"Software\Google\Chrome\NativeMessagingHosts\com.pockettts.engine", expectedOrigin));
+            response.Add("edge", ReadRegistration(@"Software\Microsoft\Edge\NativeMessagingHosts\com.pockettts.engine", expectedOrigin));
+            return response;
+        }
+
+        private static Dictionary<string, object> ReadRegistration(string subKeyPath, string expectedOrigin)
+        {
+            var result = new Dictionary<string, object>();
+            result.Add("keyPath", string.Format(@"HKCU\{0}", subKeyPath));
+
+            using (var key = Registry.CurrentUser.OpenSubKey(subKeyPath))
+            {
+                if (key == null)
+                {
+                    result.Add("registered", false);
+                    result.Add("error", "Registry key not found.");
+                    return result;
+                }
+
+                var manifestPath = key.GetValue(null) as string;
+                result.Add("manifestPath", manifestPath ?? string.Empty);
+
+                if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
+                {
+                    result.Add("registered", false);
+                    result.Add("error", "Manifest file not found.");
+                    return result;
+                }
+
+                var manifestJson = File.ReadAllText(manifestPath);
+                var registered = manifestJson.IndexOf(expectedOrigin, StringComparison.OrdinalIgnoreCase) >= 0;
+                result.Add("registered", registered);
+                result.Add("originMatched", registered);
+
+                if (!registered)
+                {
+                    result.Add("error", "Expected extension origin was not found in the manifest.");
+                }
+
+                return result;
             }
         }
     }

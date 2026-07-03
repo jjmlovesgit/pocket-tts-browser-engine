@@ -16,6 +16,7 @@ const clearLogBtn = document.getElementById('clearLogBtn');
 const logArea = document.getElementById('logArea');
 const extensionId = document.getElementById('extensionId');
 const openOptionsLink = document.getElementById('openOptionsLink');
+const bridgeExtensionIdInput = document.getElementById('bridgeExtensionIdInput');
 
 let settings = {};
 let isSpeaking = false;
@@ -29,6 +30,7 @@ const FALLBACK_VOICE_NAMES = [
   'Pocket US Child',
   'Pocket UK Child'
 ];
+const INSTALLER_EXTENSION_ID_KEY = 'bridgeExtensionId';
 
 // ============================================
 // Logging
@@ -131,12 +133,32 @@ function loadSettings() {
       defaultVoice: 'Pocket US Female',
       speed: 1.0,
       pitch: 1.0,
-      volume: 1.0
+      volume: 1.0,
+      bridgeExtensionId: chrome.runtime.id
     };
     if (voiceSelect.querySelector(`option[value="${settings.defaultVoice}"]`)) {
       voiceSelect.value = settings.defaultVoice;
     }
+    bridgeExtensionIdInput.value = settings.bridgeExtensionId || chrome.runtime.id;
   });
+}
+
+function normalizeExtensionId(value) {
+  const trimmed = (value || '').trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const urlMatch = trimmed.match(/^chrome-extension:\/\/([a-z]{32})\/?$/i);
+  if (urlMatch) {
+    return urlMatch[1].toLowerCase();
+  }
+
+  if (/^[a-z]{32}$/i.test(trimmed)) {
+    return trimmed.toLowerCase();
+  }
+
+  return '';
 }
 
 // ============================================
@@ -199,6 +221,22 @@ function stopSpeech() {
   addLog('Speech stopped by user', 'info');
 }
 
+async function openSidePanel() {
+  try {
+    const currentWindow = await chrome.windows.getCurrent();
+    await chrome.sidePanel.setOptions({
+      path: 'options.html',
+      enabled: true
+    });
+    await chrome.sidePanel.open({
+      windowId: currentWindow.id
+    });
+    window.close();
+  } catch (error) {
+    addLog(`Failed to open side panel: ${error.message}`, 'error');
+  }
+}
+
 // ============================================
 // Event Listeners
 // ============================================
@@ -231,11 +269,11 @@ refreshBtn.addEventListener('click', () => {
 
 // Options
 optionsBtn.addEventListener('click', () => {
-  chrome.runtime.openOptionsPage();
+  openSidePanel();
 });
 
 openOptionsLink.addEventListener('click', () => {
-  chrome.runtime.openOptionsPage();
+  openSidePanel();
 });
 
 // Clear log
@@ -247,6 +285,17 @@ clearLogBtn.addEventListener('click', () => {
 // Voice selection saves preference
 voiceSelect.addEventListener('change', () => {
   settings.defaultVoice = voiceSelect.value;
+  chrome.storage.local.set({ [STORAGE_KEY]: settings });
+});
+
+bridgeExtensionIdInput.addEventListener('blur', () => {
+  const normalized = normalizeExtensionId(bridgeExtensionIdInput.value);
+  if (!normalized) {
+    return;
+  }
+
+  bridgeExtensionIdInput.value = normalized;
+  settings[INSTALLER_EXTENSION_ID_KEY] = normalized;
   chrome.storage.local.set({ [STORAGE_KEY]: settings });
 });
 

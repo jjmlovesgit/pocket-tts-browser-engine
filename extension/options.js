@@ -81,13 +81,22 @@ function addLog(message, type = "info") {
   logArea.scrollTop = logArea.scrollHeight;
 }
 
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type !== "debug.log" || !message.entry) {
+    return;
+  }
+
+  const detail = message.entry.detail ? ` ${JSON.stringify(message.entry.detail)}` : "";
+  addLog(`[worker] ${message.entry.message}${detail}`, "info");
+});
+
 function setStatus(state, message) {
   statusDisplay.className = `status-row ${state}`;
   statusText.textContent = message;
 }
 
 async function checkStatus() {
-  setStatus("loading", "Checking server...");
+  setStatus("loading", "Checking server and bridge...");
   addLog("Checking server status...");
 
   try {
@@ -101,6 +110,7 @@ async function checkStatus() {
       modelStatusDisplay.textContent = "Loaded";
       backendDisplay.textContent = data.backend || "CUDA";
       addLog("Server is healthy", "success");
+      await verifyBridgeRegistration();
       return true;
     }
 
@@ -112,6 +122,7 @@ async function checkStatus() {
     modelStatusDisplay.textContent = "Not connected";
     backendDisplay.textContent = "N/A";
     addLog(`Server not reachable: ${error.message}`, "error");
+    await verifyBridgeRegistration();
     return false;
   }
 }
@@ -286,6 +297,51 @@ async function refreshBridgeStatus() {
     bridgeStatusDisplay.textContent = "Not installed";
     addLog(`Bridge unavailable: ${error.message}`, "info");
     return false;
+  }
+}
+
+async function verifyBridgeRegistration() {
+  try {
+    const extensionId = getInstallerExtensionId();
+    const response = await sendBackgroundMessage({
+      type: "bridge.verifyRegistration",
+      extensionId
+    });
+
+    const chromeStatus = response.response?.chrome;
+    const edgeStatus = response.response?.edge;
+    const chromeRegistered = !!chromeStatus?.registered;
+    const edgeRegistered = !!edgeStatus?.registered;
+
+    if (chromeRegistered || edgeRegistered) {
+      const targets = [];
+      if (chromeRegistered) {
+        targets.push("Chrome");
+      }
+      if (edgeRegistered) {
+        targets.push("Edge");
+      }
+
+      addLog(`Bridge registered in ${targets.join(" and ")}`, "success");
+    } else {
+      addLog("Bridge registry entry not confirmed for Chrome or Edge", "error");
+    }
+
+    if (chromeStatus?.manifestPath) {
+      addLog(`Chrome HKCU: ${chromeStatus.manifestPath}`, chromeRegistered ? "info" : "error");
+    }
+    if (edgeStatus?.manifestPath) {
+      addLog(`Edge HKCU: ${edgeStatus.manifestPath}`, edgeRegistered ? "info" : "error");
+    }
+
+    if (chromeStatus?.error && !chromeRegistered) {
+      addLog(`Chrome registration: ${chromeStatus.error}`, "error");
+    }
+    if (edgeStatus?.error && !edgeRegistered) {
+      addLog(`Edge registration: ${edgeStatus.error}`, "error");
+    }
+  } catch (error) {
+    addLog(`Bridge registration check failed: ${error.message}`, "error");
   }
 }
 

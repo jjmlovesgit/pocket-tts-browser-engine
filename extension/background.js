@@ -3,6 +3,7 @@ const BRIDGE_HOST_NAME = "com.pockettts.engine";
 const DEFAULT_SERVER_EXE_PATH = "C:\\Projects\\audio.cpp\\build\\windows-cuda-release\\bin\\audiocpp_server.exe";
 const DEFAULT_SERVER_CONFIG_PATH = "C:\\Projects\\audio.cpp\\server.json";
 const BRIDGE_INSTALL_SCRIPT_PATH = "C:\\Projects\\pocket-tts-engine\\scripts\\install-native-bridge.ps1";
+const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 
 const VOICE_MAP = {
   "Pocket US Female": "alba",
@@ -17,6 +18,22 @@ const VOICE_MAP = {
 
 let activeRequestId = 0;
 let activeAbortController = null;
+let creatingOffscreenDocument = null;
+let fallbackQueue = Promise.resolve();
+let fallbackGeneration = 0;
+
+function emitDebugLog(message, detail = null) {
+  const entry = {
+    message,
+    detail,
+    timestamp: new Date().toISOString()
+  };
+
+  console.log("[Pocket TTS]", message, detail ?? "");
+  chrome.runtime.sendMessage({ type: "debug.log", entry }, () => {
+    void chrome.runtime.lastError;
+  });
+}
 
 function sendNativeCommand(message) {
   return new Promise((resolve, reject) => {
@@ -42,6 +59,52 @@ function clamp(value, min, max, fallback) {
 
 function getVoiceName(voiceName) {
   return VOICE_MAP[voiceName] || VOICE_MAP["Pocket US Female"];
+}
+
+async function hasOffscreenDocument(path) {
+  const offscreenUrl = chrome.runtime.getURL(path);
+
+  if ("getContexts" in chrome.runtime) {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ["OFFSCREEN_DOCUMENT"],
+      documentUrls: [offscreenUrl]
+    });
+    return contexts.length > 0;
+  }
+
+  const matchedClients = await clients.matchAll();
+  return matchedClients.some((client) => client.url === offscreenUrl);
+}
+
+async function ensureOffscreenDocument() {
+  if (await hasOffscreenDocument(OFFSCREEN_DOCUMENT_PATH)) {
+    return;
+  }
+
+  if (!creatingOffscreenDocument) {
+    creatingOffscreenDocument = chrome.offscreen.createDocument({
+      url: OFFSCREEN_DOCUMENT_PATH,
+      reasons: ["AUDIO_PLAYBACK", "BLOBS"],
+      justification: "Play Pocket TTS audio for chrome.ttsEngine onSpeak requests."
+    }).finally(() => {
+      creatingOffscreenDocument = null;
+    });
+  }
+
+  await creatingOffscreenDocument;
+}
+
+function sendRuntimeMessage(message) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+
+      resolve(response);
+    });
+  });
 }
 
 function readAscii(view, start, length) {
@@ -184,6 +247,7 @@ function applyVolume(samples, volume) {
 
 function sendAudioChunks(samples, audioStreamOptions, utteranceLength, sendTtsAudio) {
   const chunkSize = audioStreamOptions.bufferSize;
+  let chunkCount = 0;
 
   for (let offset = 0; offset < samples.length; offset += chunkSize) {
     const end = Math.min(offset + chunkSize, samples.length);
@@ -198,12 +262,33 @@ function sendAudioChunks(samples, audioStreamOptions, utteranceLength, sendTtsAu
       charIndex,
       isLastBuffer: end >= samples.length
     });
+    chunkCount += 1;
   }
+
+  emitDebugLog("Audio chunks sent", {
+    chunkCount,
+    chunkSize,
+    sampleCount: samples.length,
+    targetSampleRate: audioStreamOptions.sampleRate
+  });
 }
 
 async function synthesizeSpeech(utterance, options, audioStreamOptions, sendTtsAudio) {
   activeRequestId += 1;
   const requestId = activeRequestId;
+  const mappedVoice = getVoiceName(options.voiceName);
+
+  emitDebugLog("Speech request received", {
+    requestId,
+    utteranceLength: utterance.length,
+    voiceName: options.voiceName,
+    mappedVoice,
+    rate: options.rate,
+    pitch: options.pitch,
+    volume: options.volume,
+    sampleRate: audioStreamOptions.sampleRate,
+    bufferSize: audioStreamOptions.bufferSize
+  });
 
   if (activeAbortController) {
     activeAbortController.abort();
@@ -218,11 +303,17 @@ async function synthesizeSpeech(utterance, options, audioStreamOptions, sendTtsA
     body: JSON.stringify({
       model: "pocket-tts",
       input: utterance,
-      voice: getVoiceName(options.voiceName),
+      voice: mappedVoice,
       speed: clamp(options.rate, 0.1, 10, 1),
       pitch: clamp(options.pitch, 0, 2, 1),
       response_format: "wav"
     })
+  });
+
+  emitDebugLog("Speech fetch completed", {
+    requestId,
+    status: response.status,
+    ok: response.ok
   });
 
   if (!response.ok) {
@@ -230,23 +321,162 @@ async function synthesizeSpeech(utterance, options, audioStreamOptions, sendTtsA
   }
 
   const wavData = await response.arrayBuffer();
+  emitDebugLog("WAV payload received", {
+    requestId,
+    byteLength: wavData.byteLength
+  });
+
   if (requestId !== activeRequestId) {
+    emitDebugLog("Speech request superseded", { requestId });
     return;
   }
 
   const decoded = decodeWavToMonoFloat32(wavData);
+  emitDebugLog("WAV decoded", {
+    requestId,
+    sourceSampleRate: decoded.sampleRate,
+    sampleCount: decoded.samples.length
+  });
+
   const resampled = resampleLinear(
     decoded.samples,
     decoded.sampleRate,
     audioStreamOptions.sampleRate
   );
+  emitDebugLog("Audio resampled", {
+    requestId,
+    targetSampleRate: audioStreamOptions.sampleRate,
+    sampleCount: resampled.length
+  });
+
   const finalSamples = applyVolume(
     resampled,
     clamp(options.volume, 0, 1, 1)
   );
 
   sendAudioChunks(finalSamples, audioStreamOptions, utterance.length, sendTtsAudio);
+  emitDebugLog("Speech synthesis finished", { requestId });
 }
+
+async function synthesizeWavAudio(utterance, options) {
+  const mappedVoice = getVoiceName(options.voiceName);
+
+  emitDebugLog("Fallback speech request received", {
+    utteranceLength: utterance.length,
+    voiceName: options.voiceName,
+    mappedVoice,
+    rate: options.rate,
+    pitch: options.pitch,
+    volume: options.volume
+  });
+
+  const response = await fetch(`${SERVER_URL}/v1/audio/speech`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "pocket-tts",
+      input: utterance,
+      voice: mappedVoice,
+      speed: clamp(options.rate, 0.1, 10, 1),
+      pitch: clamp(options.pitch, 0, 2, 1),
+      response_format: "wav"
+    })
+  });
+
+  emitDebugLog("Fallback speech fetch completed", {
+    status: response.status,
+    ok: response.ok
+  });
+
+  if (!response.ok) {
+    throw new Error(`Pocket TTS server returned HTTP ${response.status}`);
+  }
+
+  return response.arrayBuffer();
+}
+
+async function fallbackSpeakListener(utterance, options, sendTtsEvent) {
+  const enqueue = options.enqueue !== false;
+
+  emitDebugLog("onSpeak fallback invoked", {
+    utteranceLength: utterance.length,
+    voiceName: options.voiceName,
+    enqueue,
+    note: "Using offscreen playback path."
+  });
+
+  if (!enqueue) {
+    fallbackGeneration += 1;
+    sendRuntimeMessage({ type: "offscreen.stopAudio" }).catch(() => {});
+  }
+
+  const requestGeneration = fallbackGeneration;
+
+  const task = async () => {
+    try {
+      if (requestGeneration !== fallbackGeneration && enqueue) {
+        emitDebugLog("Fallback speech skipped", {
+          utteranceLength: utterance.length,
+          reason: "queue invalidated before start"
+        });
+        return;
+      }
+
+      sendTtsEvent({
+        type: "start",
+        charIndex: 0
+      });
+
+      const wavBuffer = await synthesizeWavAudio(utterance, options);
+
+      if (requestGeneration !== fallbackGeneration && enqueue) {
+        emitDebugLog("Fallback speech skipped", {
+          utteranceLength: utterance.length,
+          reason: "queue invalidated after fetch"
+        });
+        return;
+      }
+
+      await ensureOffscreenDocument();
+
+      const playbackResponse = await sendRuntimeMessage({
+        type: "offscreen.playAudio",
+        wavBytes: Array.from(new Uint8Array(wavBuffer)),
+        volume: clamp(options.volume, 0, 1, 1)
+      });
+
+      if (!playbackResponse?.ok) {
+        throw new Error(playbackResponse?.error || "Offscreen audio playback failed.");
+      }
+
+      emitDebugLog("Offscreen playback completed", {
+        byteLength: wavBuffer.byteLength
+      });
+
+      sendTtsEvent({
+        type: "end",
+        charIndex: utterance.length
+      });
+    } catch (error) {
+      emitDebugLog("Fallback speech failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+
+      sendTtsEvent({
+        type: "error",
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+    }
+  };
+
+  fallbackQueue = fallbackQueue
+    .catch(() => {})
+    .then(task);
+
+  return fallbackQueue;
+}
+
+chrome.ttsEngine.onSpeak.addListener(fallbackSpeakListener);
 
 chrome.ttsEngine.onSpeakWithAudioStream.addListener(
   async (utterance, options, audioStreamOptions, sendTtsAudio, sendError) => {
@@ -259,10 +489,14 @@ chrome.ttsEngine.onSpeakWithAudioStream.addListener(
       );
     } catch (error) {
       if (error?.name === "AbortError") {
+        emitDebugLog("Speech aborted", { reason: "AbortError" });
         return;
       }
 
       console.error("Pocket TTS stream failed:", error);
+      emitDebugLog("Speech stream failed", {
+        error: error instanceof Error ? error.message : String(error)
+      });
       sendError(error instanceof Error ? error.message : String(error));
     }
   }
@@ -270,11 +504,16 @@ chrome.ttsEngine.onSpeakWithAudioStream.addListener(
 
 chrome.ttsEngine.onStop.addListener(() => {
   activeRequestId += 1;
+  fallbackGeneration += 1;
+  fallbackQueue = Promise.resolve();
+  emitDebugLog("TTS stop received", { activeRequestId });
 
   if (activeAbortController) {
     activeAbortController.abort();
     activeAbortController = null;
   }
+
+  sendRuntimeMessage({ type: "offscreen.stopAudio" }).catch(() => {});
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -292,6 +531,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       case "bridge.ping": {
         const response = await sendNativeCommand({ command: "ping" });
+        sendResponse({ ok: true, response });
+        return;
+      }
+      case "bridge.verifyRegistration": {
+        const response = await sendNativeCommand({
+          command: "verifyRegistration",
+          extensionId: message.extensionId || chrome.runtime.id
+        });
         sendResponse({ ok: true, response });
         return;
       }

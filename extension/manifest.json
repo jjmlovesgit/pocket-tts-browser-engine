@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "description": "System-wide high-quality TTS using Pocket TTS (audio.cpp)",
   "permissions": [
+    "offscreen",
     "nativeMessaging",
+    "sidePanel",
     "tts",
     "ttsEngine",
     "storage"
@@ -60,6 +62,9 @@
   "background": {
     "service_worker": "background.js",
     "type": "module"
+  },
+  "side_panel": {
+    "default_path": "options.html"
   },
   "options_page": "options.html",
   "action": {

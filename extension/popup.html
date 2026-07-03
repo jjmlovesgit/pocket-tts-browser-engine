@@ -206,6 +206,55 @@
       padding: 4px 12px;
       font-size: 11px;
     }
+    .accordion {
+      border: 1px solid #e8eaed;
+      border-radius: 8px;
+      background: white;
+      margin-top: 10px;
+      overflow: hidden;
+    }
+    .accordion summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 10px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #1a1a2e;
+      user-select: none;
+    }
+    .accordion summary::-webkit-details-marker {
+      display: none;
+    }
+    .accordion summary::after {
+      content: '+';
+      float: right;
+      color: #666;
+    }
+    .accordion[open] summary::after {
+      content: '-';
+    }
+    .accordion-body {
+      padding: 0 12px 12px;
+    }
+    .accordion-body input {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      font-size: 12px;
+      font-family: 'Consolas', monospace;
+      margin-bottom: 8px;
+    }
+    .accordion-body input:focus {
+      outline: none;
+      border-color: #4a6cf7;
+    }
+    .accordion-help {
+      font-size: 10px;
+      color: #666;
+      line-height: 1.4;
+      margin-bottom: 8px;
+    }
   </style>
 </head>
 <body>
@@ -246,15 +295,25 @@
 
   <div class="btn-group">
     <button id="refreshBtn" class="btn btn-secondary btn-sm">🔄 Refresh</button>
-    <button id="optionsBtn" class="btn btn-secondary btn-sm">⚙️ Options</button>
+    <button id="optionsBtn" class="btn btn-secondary btn-sm">Panel</button>
     <button id="clearLogBtn" class="btn btn-secondary btn-sm">🗑 Clear</button>
   </div>
+
+  <details class="accordion">
+    <summary>Add Installer Extension ID</summary>
+    <div class="accordion-body">
+      <input id="bridgeExtensionIdInput" type="text" placeholder="hijmjnmdgkcjlnhoimfnhkgkdaaeeaha or chrome-extension://.../">
+      <div class="accordion-help">
+        Paste the raw extension ID or the full <code>chrome-extension://.../</code> URL. The popup will normalize and save it.
+      </div>
+    </div>
+  </details>
 
   <div id="logArea" class="log-area">🚀 Ready</div>
 
   <div class="footer">
     <span id="extensionId">v0.1.0</span>
-    <a id="openOptionsLink">⚙️ Settings</a>
+    <a id="openOptionsLink">Open Panel</a>
   </div>
 
   <script src="popup.js"></script>
