@@ -555,6 +555,31 @@
       gap: 4px;
     }
 
+    .inline-form {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .inline-form-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .inline-form-row input[type="text"] {
+      flex: 1;
+      min-width: 220px;
+    }
+
+    .inline-status {
+      min-height: 20px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
     @media (max-width: 600px) {
       body { padding: 16px; }
       .page-header { flex-direction: column; align-items: stretch; }
@@ -617,6 +642,31 @@
           <span class="value" id="backendDisplay">Unknown</span>
           <span class="label">Bridge</span>
           <span class="value" id="bridgeStatusDisplay">Unknown</span>
+        </div>
+        <div class="inline-form">
+          <label for="serverUrlInput" class="field-label">Local Server Endpoint</label>
+          <div class="inline-form-row">
+            <input id="serverUrlInput" type="text" placeholder="http://127.0.0.1:8080">
+            <button id="saveServerUrlBtn" class="btn btn-secondary" type="button">Set Server URL</button>
+          </div>
+          <div class="field-note">
+            Local-only endpoints are supported here. Example: <code>http://127.0.0.1:8080</code> or <code>http://localhost:8080</code>.
+          </div>
+        </div>
+        <div class="inline-form">
+          <label for="serverExePathInput" class="field-label">Runtime Paths</label>
+          <input id="serverExePathInput" type="text" placeholder="C:\Projects\audio.cpp\build\windows-cuda-release\bin\audiocpp_server.exe">
+          <input id="cliExePathInput" type="text" placeholder="C:\Projects\audio.cpp\build\windows-cuda-release\bin\audiocpp_cli.exe">
+          <input id="serverConfigPathInput" type="text" placeholder="C:\Projects\audio.cpp\server.json">
+          <input id="pocketModelPathInput" type="text" placeholder="C:\Projects\audio.cpp\models\pocket-tts">
+          <div class="inline-form-row">
+            <button id="saveRuntimePathsBtn" class="btn btn-secondary" type="button">Save Runtime Paths</button>
+            <button id="resetRuntimePathsBtn" class="btn btn-secondary" type="button">Reset Defaults</button>
+          </div>
+          <div id="runtimePathsStatus" class="inline-status">Using default runtime paths until you save changes.</div>
+          <div class="field-note">
+            These paths are used for native bridge server start/stop and custom reference voice synthesis through <code>audiocpp_cli</code>.
+          </div>
         </div>
       </div>
     </details>

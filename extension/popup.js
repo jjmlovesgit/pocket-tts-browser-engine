@@ -1,4 +1,4 @@
-const SERVER_URL = 'http://127.0.0.1:8080';
+const DEFAULT_SERVER_URL = 'http://127.0.0.1:8080';
 const STORAGE_KEY = 'pocket-tts-settings';
 
 const statusBadge = document.getElementById('statusBadge');
@@ -19,10 +19,17 @@ const themeToggleBtn = document.getElementById('themeToggleBtn');
 const launchProgress = document.getElementById('launchProgress');
 const launchProgressNote = document.getElementById('launchProgressNote');
 const quickTestButtons = Array.from(document.querySelectorAll('.quick-test .btn'));
+const popupServerUrlDisplay = document.getElementById('popupServerUrlDisplay');
+const popupServerExeDisplay = document.getElementById('popupServerExeDisplay');
+const popupCliExeDisplay = document.getElementById('popupCliExeDisplay');
 
 let settings = {};
 let isSpeaking = false;
 const DEFAULT_THEME = 'light';
+const DEFAULT_SERVER_EXE_PATH = 'C:\\Projects\\audio.cpp\\build\\windows-cuda-release\\bin\\audiocpp_server.exe';
+const DEFAULT_CLI_EXE_PATH = 'C:\\Projects\\audio.cpp\\build\\windows-cuda-release\\bin\\audiocpp_cli.exe';
+const DEFAULT_SERVER_CONFIG_PATH = 'C:\\Projects\\audio.cpp\\server.json';
+const DEFAULT_POCKET_MODEL_PATH = 'C:\\Projects\\audio.cpp\\models\\pocket-tts';
 const SERVER_START_TIMEOUT_MS = 20000;
 const SERVER_START_POLL_MS = 1000;
 let isServerLaunching = false;
@@ -64,6 +71,16 @@ function applyTheme(theme) {
   const normalizedTheme = theme === 'dark' ? 'dark' : 'light';
   document.body.dataset.theme = normalizedTheme;
   themeToggleBtn.textContent = normalizedTheme === 'dark' ? 'Light' : 'Dark';
+}
+
+function getConfiguredServerUrl() {
+  return settings.serverUrl || DEFAULT_SERVER_URL;
+}
+
+function updateRuntimeSetupDisplay() {
+  popupServerUrlDisplay.textContent = settings.serverUrl || DEFAULT_SERVER_URL;
+  popupServerExeDisplay.textContent = settings.serverExePath || DEFAULT_SERVER_EXE_PATH;
+  popupCliExeDisplay.textContent = settings.cliExePath || DEFAULT_CLI_EXE_PATH;
 }
 
 function sendBackgroundMessage(message) {
@@ -200,7 +217,7 @@ function setLaunchProgress(active, message = 'Waiting for local server to respon
 async function checkStatus() {
   setStatus('loading', 'Checking...');
   try {
-    const response = await fetch(`${SERVER_URL}/health`, {
+    const response = await fetch(`${getConfiguredServerUrl()}/health`, {
       signal: AbortSignal.timeout(1500)
     });
     if (response.ok) {
@@ -275,13 +292,26 @@ function loadSettings() {
       pitch: 1.0,
       volume: 1.0,
       bridgeExtensionId: chrome.runtime.id,
-      theme: DEFAULT_THEME
+      theme: DEFAULT_THEME,
+      serverUrl: DEFAULT_SERVER_URL,
+      serverExePath: DEFAULT_SERVER_EXE_PATH,
+      cliExePath: DEFAULT_CLI_EXE_PATH,
+      serverConfigPath: DEFAULT_SERVER_CONFIG_PATH,
+      pocketModelPath: DEFAULT_POCKET_MODEL_PATH
     };
+    settings.serverUrl = settings.serverUrl || DEFAULT_SERVER_URL;
+    settings.serverExePath = settings.serverExePath || DEFAULT_SERVER_EXE_PATH;
+    settings.cliExePath = settings.cliExePath || DEFAULT_CLI_EXE_PATH;
+    settings.serverConfigPath = settings.serverConfigPath || DEFAULT_SERVER_CONFIG_PATH;
+    settings.pocketModelPath = settings.pocketModelPath || DEFAULT_POCKET_MODEL_PATH;
     applyTheme(settings.theme || DEFAULT_THEME);
     if (voiceSelect.querySelector(`option[value="${settings.defaultVoice}"]`)) {
       voiceSelect.value = settings.defaultVoice;
     }
     bridgeExtensionIdInput.value = settings.bridgeExtensionId || chrome.runtime.id;
+    updateRuntimeSetupDisplay();
+    addLog(`Runtime server URL: ${settings.serverUrl}`, 'info');
+    addLog(`Runtime server exe: ${settings.serverExePath}`, 'info');
   });
 }
 

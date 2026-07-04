@@ -1,5 +1,6 @@
-const SERVER_URL = "http://127.0.0.1:8080";
+const DEFAULT_SERVER_URL = "http://127.0.0.1:8080";
 const BRIDGE_HOST_NAME = "com.pockettts.engine";
+const STORAGE_KEY = "pocket-tts-settings";
 const DEFAULT_SERVER_EXE_PATH = "C:\\Projects\\audio.cpp\\build\\windows-cuda-release\\bin\\audiocpp_server.exe";
 const DEFAULT_CLI_EXE_PATH = "C:\\Projects\\audio.cpp\\build\\windows-cuda-release\\bin\\audiocpp_cli.exe";
 const DEFAULT_SERVER_CONFIG_PATH = "C:\\Projects\\audio.cpp\\server.json";
@@ -60,6 +61,25 @@ function emitDebugLog(message, detail = null) {
   chrome.runtime.sendMessage({ type: "debug.log", entry }, () => {
     void chrome.runtime.lastError;
   });
+}
+
+async function getConfiguredServerUrl() {
+  const stored = await getStorageLocal([STORAGE_KEY]);
+  return stored?.[STORAGE_KEY]?.serverUrl || DEFAULT_SERVER_URL;
+}
+
+async function getRuntimeConfig() {
+  const stored = await getStorageLocal([STORAGE_KEY]);
+  const runtimeSettings = stored?.[STORAGE_KEY] || {};
+  return {
+    serverUrl: runtimeSettings.serverUrl || DEFAULT_SERVER_URL,
+    serverExePath: runtimeSettings.serverExePath || DEFAULT_SERVER_EXE_PATH,
+    cliExePath: runtimeSettings.cliExePath || DEFAULT_CLI_EXE_PATH,
+    serverConfigPath: runtimeSettings.serverConfigPath || DEFAULT_SERVER_CONFIG_PATH,
+    pocketModelPath: runtimeSettings.pocketModelPath || DEFAULT_POCKET_MODEL_PATH,
+    pocketFamily: DEFAULT_POCKET_FAMILY,
+    pocketBackend: DEFAULT_POCKET_BACKEND
+  };
 }
 
 function getUtterancePreview(utterance) {
@@ -335,7 +355,8 @@ function getVoiceName(voiceName) {
 }
 
 async function probeMappedVoice(mappedVoice) {
-  const response = await fetch(`${SERVER_URL}/v1/audio/speech`, {
+  const { serverUrl } = await getRuntimeConfig();
+  const response = await fetch(`${serverUrl}/v1/audio/speech`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -414,6 +435,7 @@ async function getVoiceProfile(voiceName) {
 }
 
 async function buildSpeechRequest(utterance, options) {
+  const runtimeConfig = await getRuntimeConfig();
   const voiceProfile = await getVoiceProfile(options.voiceName);
   const payload = {
     model: "pocket-tts",
@@ -444,13 +466,13 @@ async function buildSpeechRequest(utterance, options) {
     throw new Error("Custom Pocket voice data was not found.");
   }
 
-  return {
-    mode: "native-cli",
-    cliRequest: {
-      cliExePath: DEFAULT_CLI_EXE_PATH,
-      modelPath: DEFAULT_POCKET_MODEL_PATH,
-      backend: DEFAULT_POCKET_BACKEND,
-      family: DEFAULT_POCKET_FAMILY,
+    return {
+      mode: "native-cli",
+      cliRequest: {
+      cliExePath: runtimeConfig.cliExePath,
+      modelPath: runtimeConfig.pocketModelPath,
+      backend: runtimeConfig.pocketBackend,
+      family: runtimeConfig.pocketFamily,
       text: utterance,
       voiceRefBase64: arrayBufferToBase64(customVoice.arrayBuffer),
       voiceRefFileName: customVoice.fileName || voiceProfile.fileName || "reference.wav"
@@ -725,7 +747,8 @@ async function synthesizeSpeech(utterance, options, audioStreamOptions, sendTtsA
 
     wavData = base64ToArrayBuffer(nativeResponse.wavBase64);
   } else {
-    const response = await fetch(`${SERVER_URL}/v1/audio/speech`, {
+    const { serverUrl } = runtimeConfig;
+    const response = await fetch(`${serverUrl}/v1/audio/speech`, {
       signal: activeAbortController.signal,
       ...speechRequest.requestInit
     });
@@ -816,7 +839,8 @@ async function synthesizeWavAudio(utterance, options) {
     return base64ToArrayBuffer(nativeResponse.wavBase64);
   }
 
-  const response = await fetch(`${SERVER_URL}/v1/audio/speech`, speechRequest.requestInit);
+  const { serverUrl } = await getRuntimeConfig();
+  const response = await fetch(`${serverUrl}/v1/audio/speech`, speechRequest.requestInit);
 
   emitDebugLog("Fallback speech fetch completed", {
     status: response.status,
@@ -1016,24 +1040,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
       case "bridge.startServer": {
+        const runtimeConfig = await getRuntimeConfig();
         const response = await sendNativeCommand({
           command: "startServer",
-          serverExePath: message.serverExePath || DEFAULT_SERVER_EXE_PATH,
-          serverConfigPath: message.serverConfigPath || DEFAULT_SERVER_CONFIG_PATH
+          serverExePath: message.serverExePath || runtimeConfig.serverExePath,
+          serverConfigPath: message.serverConfigPath || runtimeConfig.serverConfigPath
         });
         sendResponse({ ok: true, response });
         return;
       }
       case "bridge.stopServer": {
+        const runtimeConfig = await getRuntimeConfig();
         const response = await sendNativeCommand({
           command: "stopServer",
-          serverExePath: message.serverExePath || DEFAULT_SERVER_EXE_PATH
+          serverExePath: message.serverExePath || runtimeConfig.serverExePath
         });
         sendResponse({ ok: true, response });
         return;
       }
       case "voices.refresh":
         await refreshRegisteredVoices();
+        sendResponse({ ok: true });
+        return;
+      case "serverUrl.updated":
+      case "runtimePaths.updated":
+        supportedMappedVoicesCache = null;
         sendResponse({ ok: true });
         return;
       default:
@@ -1052,7 +1083,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-fetch(`${SERVER_URL}/health`)
+getRuntimeConfig()
+  .then((runtimeConfig) => fetch(`${runtimeConfig.serverUrl}/health`))
   .then((response) => response.json())
   .then((data) => console.log("Pocket TTS server healthy:", data))
   .catch((error) => console.warn("Pocket TTS server not running:", error.message));

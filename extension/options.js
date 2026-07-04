@@ -1,4 +1,8 @@
-const SERVER_URL = "http://127.0.0.1:8080";
+const DEFAULT_SERVER_URL = "http://127.0.0.1:8080";
+const DEFAULT_SERVER_EXE_PATH = "C:\\Projects\\audio.cpp\\build\\windows-cuda-release\\bin\\audiocpp_server.exe";
+const DEFAULT_CLI_EXE_PATH = "C:\\Projects\\audio.cpp\\build\\windows-cuda-release\\bin\\audiocpp_cli.exe";
+const DEFAULT_SERVER_CONFIG_PATH = "C:\\Projects\\audio.cpp\\server.json";
+const DEFAULT_POCKET_MODEL_PATH = "C:\\Projects\\audio.cpp\\models\\pocket-tts";
 const STORAGE_KEY = "pocket-tts-settings";
 const CUSTOM_VOICES_STORAGE_KEY = "pocket-tts-custom-voices";
 const CUSTOM_VOICE_DB_NAME = "pocket-tts-custom-voices-db";
@@ -12,6 +16,12 @@ const statusText = document.getElementById("statusText");
 const progressBar = document.getElementById("progressBar");
 const progressFill = document.getElementById("progressFill");
 const serverUrlDisplay = document.getElementById("serverUrlDisplay");
+const serverUrlInput = document.getElementById("serverUrlInput");
+const serverExePathInput = document.getElementById("serverExePathInput");
+const cliExePathInput = document.getElementById("cliExePathInput");
+const serverConfigPathInput = document.getElementById("serverConfigPathInput");
+const pocketModelPathInput = document.getElementById("pocketModelPathInput");
+const runtimePathsStatus = document.getElementById("runtimePathsStatus");
 const extensionIdDisplay = document.getElementById("extensionIdDisplay");
 const modelStatusDisplay = document.getElementById("modelStatusDisplay");
 const backendDisplay = document.getElementById("backendDisplay");
@@ -36,6 +46,9 @@ const refreshLogBtn = document.getElementById("refreshLogBtn");
 const checkStatusBtn = document.getElementById("checkStatusBtn");
 const installBridgeBtn = document.getElementById("installBridgeBtn");
 const startServerBtn = document.getElementById("startServerBtn");
+const saveServerUrlBtn = document.getElementById("saveServerUrlBtn");
+const saveRuntimePathsBtn = document.getElementById("saveRuntimePathsBtn");
+const resetRuntimePathsBtn = document.getElementById("resetRuntimePathsBtn");
 const saveSettingsBtn = document.getElementById("saveSettingsBtn");
 const bridgeExtensionIdInput = document.getElementById("bridgeExtensionIdInput");
 const themeToggleBtn = document.getElementById("themeToggleBtn");
@@ -52,6 +65,7 @@ const voiceSummary = document.getElementById("voiceSummary");
 let settings = {};
 let isSpeaking = false;
 let allDetectedVoices = [];
+let runtimePathsSaveFeedbackTimer = null;
 const SERVER_START_TIMEOUT_MS = 20000;
 const SERVER_START_POLL_MS = 1000;
 
@@ -134,6 +148,32 @@ function getStorageLocal(keys) {
   });
 }
 
+function getConfiguredServerUrl() {
+  return settings.serverUrl || DEFAULT_SERVER_URL;
+}
+
+function getConfiguredRuntimePaths() {
+  return {
+    serverExePath: settings.serverExePath || DEFAULT_SERVER_EXE_PATH,
+    cliExePath: settings.cliExePath || DEFAULT_CLI_EXE_PATH,
+    serverConfigPath: settings.serverConfigPath || DEFAULT_SERVER_CONFIG_PATH,
+    pocketModelPath: settings.pocketModelPath || DEFAULT_POCKET_MODEL_PATH
+  };
+}
+
+function describeRuntimePaths(runtimePaths) {
+  return `Server EXE: ${runtimePaths.serverExePath} | CLI EXE: ${runtimePaths.cliExePath} | Config: ${runtimePaths.serverConfigPath} | Model: ${runtimePaths.pocketModelPath}`;
+}
+
+function getDefaultRuntimePaths() {
+  return {
+    serverExePath: DEFAULT_SERVER_EXE_PATH,
+    cliExePath: DEFAULT_CLI_EXE_PATH,
+    serverConfigPath: DEFAULT_SERVER_CONFIG_PATH,
+    pocketModelPath: DEFAULT_POCKET_MODEL_PATH
+  };
+}
+
 function removeStorageLocal(keys) {
   return new Promise((resolve) => {
     chrome.storage.local.remove(keys, resolve);
@@ -187,6 +227,20 @@ function setCloneStatus(message, type = "info") {
     : type === "success"
       ? "var(--success)"
       : "var(--muted)";
+}
+
+function setRuntimePathsStatus(message, type = "info") {
+  runtimePathsStatus.textContent = message;
+  runtimePathsStatus.style.color = type === "error"
+    ? "var(--danger)"
+    : type === "success"
+      ? "var(--success)"
+      : "var(--muted)";
+}
+
+function setRuntimePathsButtonState(label, disabled = false) {
+  saveRuntimePathsBtn.textContent = label;
+  saveRuntimePathsBtn.disabled = disabled;
 }
 
 function applyTheme(theme) {
@@ -393,8 +447,11 @@ function renderAvailableVoices() {
 async function logRuntimeSummary() {
   try {
     const customVoices = await getCustomVoices();
-    addLog("Runtime: built-in Pocket voices use local server HTTP on 127.0.0.1:8080", "info");
+    const runtimePaths = getConfiguredRuntimePaths();
+    addLog(`Runtime: built-in Pocket voices use local server HTTP on ${getConfiguredServerUrl()}`, "info");
     addLog("Runtime: custom Pocket voices use native bridge + audiocpp_cli with --voice-ref", "info");
+    addLog(`Runtime: server exe ${runtimePaths.serverExePath}`, "info");
+    addLog(`Runtime: cli exe ${runtimePaths.cliExePath}`, "info");
     addLog(`Runtime: ${customVoices.length} custom reference voice${customVoices.length === 1 ? "" : "s"} saved locally`, "info");
   } catch (error) {
     addLog(`Runtime summary unavailable: ${error.message}`, "error");
@@ -442,11 +499,12 @@ function renderTestVoiceOptions(preferredVoiceName) {
 }
 
 async function checkStatus() {
+  const serverUrl = getConfiguredServerUrl();
   setStatus("loading", "Checking server and bridge...");
   addLog("Checking server status...");
 
   try {
-    const response = await fetch(`${SERVER_URL}/health`, {
+    const response = await fetch(`${serverUrl}/health`, {
       signal: AbortSignal.timeout(2000)
     });
 
@@ -561,8 +619,19 @@ function loadSettings() {
       pitch: 1.0,
       volume: 1.0,
       bridgeExtensionId: chrome.runtime.id,
-      theme: DEFAULT_THEME
+      theme: DEFAULT_THEME,
+      serverUrl: DEFAULT_SERVER_URL,
+      serverExePath: DEFAULT_SERVER_EXE_PATH,
+      cliExePath: DEFAULT_CLI_EXE_PATH,
+      serverConfigPath: DEFAULT_SERVER_CONFIG_PATH,
+      pocketModelPath: DEFAULT_POCKET_MODEL_PATH
     };
+
+    settings.serverUrl = settings.serverUrl || DEFAULT_SERVER_URL;
+    settings.serverExePath = settings.serverExePath || DEFAULT_SERVER_EXE_PATH;
+    settings.cliExePath = settings.cliExePath || DEFAULT_CLI_EXE_PATH;
+    settings.serverConfigPath = settings.serverConfigPath || DEFAULT_SERVER_CONFIG_PATH;
+    settings.pocketModelPath = settings.pocketModelPath || DEFAULT_POCKET_MODEL_PATH;
 
     defaultVoiceSelect.value = settings.defaultVoice || "Pocket US Female";
     testVoiceSelect.value = settings.defaultVoice || "Pocket US Female";
@@ -573,6 +642,13 @@ function loadSettings() {
     volumeSlider.value = settings.volume || 1.0;
     volumeDisplay.textContent = `${Math.round((settings.volume || 1.0) * 100)}%`;
     bridgeExtensionIdInput.value = settings.bridgeExtensionId || chrome.runtime.id;
+    serverUrlInput.value = settings.serverUrl || DEFAULT_SERVER_URL;
+    serverUrlDisplay.textContent = settings.serverUrl || DEFAULT_SERVER_URL;
+    serverExePathInput.value = settings.serverExePath || DEFAULT_SERVER_EXE_PATH;
+    cliExePathInput.value = settings.cliExePath || DEFAULT_CLI_EXE_PATH;
+    serverConfigPathInput.value = settings.serverConfigPath || DEFAULT_SERVER_CONFIG_PATH;
+    pocketModelPathInput.value = settings.pocketModelPath || DEFAULT_POCKET_MODEL_PATH;
+    setRuntimePathsStatus(describeRuntimePaths(getConfiguredRuntimePaths()), "info");
     applyTheme(settings.theme || DEFAULT_THEME);
   });
 }
@@ -585,12 +661,116 @@ function saveSettings() {
     pitch: parseFloat(pitchSlider.value),
     volume: parseFloat(volumeSlider.value),
     bridgeExtensionId: bridgeExtensionIdInput.value.trim() || chrome.runtime.id,
+    serverUrl: settings.serverUrl || DEFAULT_SERVER_URL,
+    serverExePath: settings.serverExePath || DEFAULT_SERVER_EXE_PATH,
+    cliExePath: settings.cliExePath || DEFAULT_CLI_EXE_PATH,
+    serverConfigPath: settings.serverConfigPath || DEFAULT_SERVER_CONFIG_PATH,
+    pocketModelPath: settings.pocketModelPath || DEFAULT_POCKET_MODEL_PATH,
     theme: document.body.dataset.theme || DEFAULT_THEME
   };
 
   chrome.storage.local.set({ [STORAGE_KEY]: settings }, () => {
     addLog("Settings saved", "success");
   });
+}
+
+function normalizeServerUrl(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (error) {
+    return "";
+  }
+
+  if (parsed.protocol !== "http:") {
+    return "";
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname !== "127.0.0.1" && hostname !== "localhost") {
+    return "";
+  }
+
+  const port = parsed.port ? `:${parsed.port}` : "";
+  return `http://${hostname}${port}`;
+}
+
+async function saveServerUrl() {
+  const normalized = normalizeServerUrl(serverUrlInput.value);
+  if (!normalized) {
+    addLog("Server URL must be a local http://127.0.0.1:<port> or http://localhost:<port> endpoint.", "error");
+    return;
+  }
+
+  settings.serverUrl = normalized;
+  serverUrlInput.value = normalized;
+  serverUrlDisplay.textContent = normalized;
+  chrome.storage.local.set({ [STORAGE_KEY]: settings });
+  await sendBackgroundMessage({ type: "serverUrl.updated" });
+  addLog(`Server URL set to ${normalized}`, "success");
+}
+
+async function saveRuntimePaths() {
+  if (runtimePathsSaveFeedbackTimer) {
+    clearTimeout(runtimePathsSaveFeedbackTimer);
+    runtimePathsSaveFeedbackTimer = null;
+  }
+
+  setRuntimePathsButtonState("Saving...", true);
+  setRuntimePathsStatus("Saving runtime paths...", "info");
+
+  settings.serverExePath = serverExePathInput.value.trim() || DEFAULT_SERVER_EXE_PATH;
+  settings.cliExePath = cliExePathInput.value.trim() || DEFAULT_CLI_EXE_PATH;
+  settings.serverConfigPath = serverConfigPathInput.value.trim() || DEFAULT_SERVER_CONFIG_PATH;
+  settings.pocketModelPath = pocketModelPathInput.value.trim() || DEFAULT_POCKET_MODEL_PATH;
+
+  serverExePathInput.value = settings.serverExePath;
+  cliExePathInput.value = settings.cliExePath;
+  serverConfigPathInput.value = settings.serverConfigPath;
+  pocketModelPathInput.value = settings.pocketModelPath;
+
+  chrome.storage.local.set({ [STORAGE_KEY]: settings });
+  await sendBackgroundMessage({ type: "runtimePaths.updated" });
+  const savedPathsDescription = describeRuntimePaths(getConfiguredRuntimePaths());
+  setRuntimePathsStatus(savedPathsDescription, "success");
+  setRuntimePathsButtonState("Saved", true);
+  addLog("Runtime paths saved", "success");
+  addLog(savedPathsDescription, "info");
+
+  runtimePathsSaveFeedbackTimer = setTimeout(() => {
+    setRuntimePathsButtonState("Save Runtime Paths", false);
+  }, 1600);
+}
+
+async function resetRuntimePaths() {
+  if (runtimePathsSaveFeedbackTimer) {
+    clearTimeout(runtimePathsSaveFeedbackTimer);
+    runtimePathsSaveFeedbackTimer = null;
+  }
+
+  const defaultPaths = getDefaultRuntimePaths();
+  settings.serverExePath = defaultPaths.serverExePath;
+  settings.cliExePath = defaultPaths.cliExePath;
+  settings.serverConfigPath = defaultPaths.serverConfigPath;
+  settings.pocketModelPath = defaultPaths.pocketModelPath;
+
+  serverExePathInput.value = settings.serverExePath;
+  cliExePathInput.value = settings.cliExePath;
+  serverConfigPathInput.value = settings.serverConfigPath;
+  pocketModelPathInput.value = settings.pocketModelPath;
+
+  chrome.storage.local.set({ [STORAGE_KEY]: settings });
+  await sendBackgroundMessage({ type: "runtimePaths.updated" });
+
+  const defaultPathsDescription = describeRuntimePaths(defaultPaths);
+  setRuntimePathsStatus(`Reset to defaults. ${defaultPathsDescription}`, "success");
+  addLog("Runtime paths reset to defaults", "success");
+  addLog(defaultPathsDescription, "info");
 }
 
 function normalizeExtensionId(value) {
@@ -888,7 +1068,7 @@ function testStop() {
 
 function loadExtensionInfo() {
   extensionIdDisplay.textContent = chrome.runtime.id || "Unknown";
-  serverUrlDisplay.textContent = SERVER_URL;
+  serverUrlDisplay.textContent = getConfiguredServerUrl();
 }
 
 async function refreshBridgeStatus() {
@@ -976,6 +1156,26 @@ themeToggleBtn.addEventListener("click", () => {
 
 checkStatusBtn.addEventListener("click", checkStatus);
 saveSettingsBtn.addEventListener("click", saveSettings);
+saveServerUrlBtn.addEventListener("click", () => {
+  saveServerUrl().then(() => {
+    checkStatus();
+  }).catch((error) => {
+    addLog(`Failed to save server URL: ${error.message}`, "error");
+  });
+});
+saveRuntimePathsBtn.addEventListener("click", () => {
+  saveRuntimePaths().catch((error) => {
+    setRuntimePathsButtonState("Save Runtime Paths", false);
+    setRuntimePathsStatus(`Save failed: ${error.message}`, "error");
+    addLog(`Failed to save runtime paths: ${error.message}`, "error");
+  });
+});
+resetRuntimePathsBtn.addEventListener("click", () => {
+  resetRuntimePaths().catch((error) => {
+    setRuntimePathsStatus(`Reset failed: ${error.message}`, "error");
+    addLog(`Failed to reset runtime paths: ${error.message}`, "error");
+  });
+});
 testSpeakBtn.addEventListener("click", testSpeak);
 testStopBtn.addEventListener("click", testStop);
 cloneVoiceBtn.addEventListener("click", createClonedVoice);

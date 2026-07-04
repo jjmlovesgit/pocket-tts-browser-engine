@@ -40,12 +40,20 @@ C:\Projects\audio.cpp\server.json
 C:\Projects\audio.cpp\models\pocket-tts
 ```
 
+Default local server endpoint:
+
+```text
+http://127.0.0.1:8080
+```
+
 Important:
 
 - `audio.cpp` produces both the server and the CLI from the same build tree.
 - Built-in Pocket voices use the HTTP server on `127.0.0.1:8080`.
 - Custom reference voices use `audiocpp_cli.exe` through the native bridge.
 - This repo does not build `audio.cpp` for you. It expects those binaries and models to already exist.
+- The local server URL can be changed in the extension UI if your `audio.cpp` server runs on a different localhost port.
+- The server EXE path, CLI EXE path, `server.json` path, and Pocket model path can all be changed in the extension UI.
 
 ## Runtime Model
 
@@ -105,6 +113,7 @@ The host supports:
 
 - `ping`
 - `startServer`
+- `stopServer`
 - `verifyRegistration`
 - `health`
 
@@ -159,6 +168,14 @@ Expected listening endpoint:
 http://127.0.0.1:8080
 ```
 
+If your server is running on a different local port, you can change it later in:
+
+- `Server Info` -> `Set Server URL`
+
+If your `audio.cpp` checkout lives somewhere else, you can also update:
+
+- `Server Info` -> `Runtime Paths` -> `Save Runtime Paths`
+
 ### 3. Load the extension unpacked
 
 Load [extension](C:/Projects/pocket-tts-engine/extension) as an unpacked extension in Chrome or Edge.
@@ -199,6 +216,7 @@ The popup provides:
 - voice selection
 - side panel opening
 - a collapsible `Add Installer Extension ID` section
+- a compact `Runtime Setup` summary for the active local endpoint and executable paths
 
 ### Side Panel / Options UI
 
@@ -211,6 +229,9 @@ The side panel uses [options.html](C:/Projects/pocket-tts-engine/extension/optio
 - speech testing
 - native bridge install command generation
 - server start via native bridge
+- configurable local server URL
+- configurable server, CLI, config, and model paths
+- runtime path reset back to defaults
 
 ## Start Server Button
 
@@ -247,6 +268,52 @@ In other words:
 - no, the server does not need `(venv) (base)` specifically for runtime
 - yes, working-directory-sensitive configs can still matter
 - the current UI button is useful, but path handling should be considered part of the prerequisite setup
+
+## Custom Local Port
+
+By default the extension assumes:
+
+```text
+http://127.0.0.1:8080
+```
+
+If your local `audio.cpp` server listens on a different localhost port, open the side panel and update:
+
+- `Server Info` -> `Local Server Endpoint` -> `Set Server URL`
+
+Supported values are intentionally limited to local HTTP endpoints such as:
+
+- `http://127.0.0.1:8080`
+- `http://127.0.0.1:9000`
+- `http://localhost:8080`
+
+This keeps the extension aligned with the local-only privacy model.
+
+## Configurable Runtime Paths
+
+The extension no longer requires the default `C:\Projects\audio.cpp` layout.
+
+Open the side panel and update:
+
+- `Server Info` -> `Runtime Paths`
+
+You can override:
+
+- `audiocpp_server.exe`
+- `audiocpp_cli.exe`
+- `server.json`
+- `models\pocket-tts`
+
+Use:
+
+- `Save Runtime Paths` to store a custom local layout
+- `Reset Defaults` to return to the built-in `C:\Projects\audio.cpp` assumptions
+
+These saved paths are used by:
+
+- `Start Server`
+- `Stop Server`
+- custom reference voice synthesis through `audiocpp_cli`
 
 ## Verification Checklist
 
@@ -287,4 +354,4 @@ pocket-tts-engine/
 - This repo contains the browser-side engine and native bridge pieces.
 - The Pocket TTS model files and `audio.cpp` server binary live outside this repo.
 - The current implementation is optimized for fully local use on Windows with Chrome/Edge.
-- If you want a more portable install later, the next improvement is making the server, CLI, config, and model paths configurable instead of assuming `C:\Projects\audio.cpp`.
+- The extension can now be pointed at non-default local `audio.cpp` layouts through the side panel runtime path settings.
