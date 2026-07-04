@@ -20,6 +20,7 @@ This project has four main parts:
 - Plays speech entirely locally using Pocket TTS through `audio.cpp`.
 - Supports Microsoft Read Aloud style chunked `onSpeak` traffic with queued fallback playback.
 - Supports one-click native bridge self-update from the side panel after the first bridge install.
+- Supports custom local reference voices cloned from a short WAV sample, with good results from about 10 seconds of clean audio.
 
 ## Prerequisites
 
@@ -67,6 +68,7 @@ There are two local synthesis paths:
 2. Custom reference voices
 
 - Browser TTS request -> extension -> native messaging host -> local `audiocpp_cli.exe --voice-ref`
+- You can add a custom local voice in the UI by uploading a short clean WAV sample; about 10 seconds is a practical reference length.
 
 Both paths are local-only when you are using Pocket voices from this extension.
 
