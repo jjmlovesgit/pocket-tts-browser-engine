@@ -23,11 +23,12 @@ namespace PocketTtsNativeHost
         public string voiceRefBase64 { get; set; }
         public string voiceRefFileName { get; set; }
         public string family { get; set; }
+        public string installScriptPath { get; set; }
     }
 
     internal static class Program
     {
-        private const string HostVersion = "1.2.0";
+        private const string HostVersion = "1.4.0";
 
         private static int Main()
         {
@@ -52,6 +53,18 @@ namespace PocketTtsNativeHost
                 if (command == "startServer")
                 {
                     WriteResponse(StartServer(request.serverExePath, request.serverConfigPath));
+                    return 0;
+                }
+
+                if (command == "validateRuntimePaths")
+                {
+                    WriteResponse(ValidateRuntimePaths(request));
+                    return 0;
+                }
+
+                if (command == "installOrUpdateBridge")
+                {
+                    WriteResponse(InstallOrUpdateBridge(request.installScriptPath, request.extensionId));
                     return 0;
                 }
 
@@ -171,6 +184,88 @@ namespace PocketTtsNativeHost
             startResponse.Add("alreadyRunning", false);
             startResponse.Add("pid", process != null ? process.Id : 0);
             return startResponse;
+        }
+
+        private static Dictionary<string, object> BuildPathValidationResult(string label, string path, bool exists, string kind)
+        {
+            var result = new Dictionary<string, object>();
+            result.Add("label", label);
+            result.Add("path", path ?? string.Empty);
+            result.Add("exists", exists);
+            result.Add("kind", kind);
+            return result;
+        }
+
+        private static Dictionary<string, object> ValidateRuntimePaths(NativeRequest request)
+        {
+            var checks = new List<Dictionary<string, object>>();
+
+            var serverExePath = request.serverExePath ?? string.Empty;
+            var serverConfigPath = request.serverConfigPath ?? string.Empty;
+            var cliExePath = request.cliExePath ?? string.Empty;
+            var modelPath = request.modelPath ?? string.Empty;
+
+            var serverExeExists = !string.IsNullOrWhiteSpace(serverExePath) && File.Exists(serverExePath);
+            var serverConfigExists = !string.IsNullOrWhiteSpace(serverConfigPath) && File.Exists(serverConfigPath);
+            var cliExeExists = !string.IsNullOrWhiteSpace(cliExePath) && File.Exists(cliExePath);
+            var modelPathExists = !string.IsNullOrWhiteSpace(modelPath) && Directory.Exists(modelPath);
+
+            checks.Add(BuildPathValidationResult("serverExePath", serverExePath, serverExeExists, "file"));
+            checks.Add(BuildPathValidationResult("serverConfigPath", serverConfigPath, serverConfigExists, "file"));
+            checks.Add(BuildPathValidationResult("cliExePath", cliExePath, cliExeExists, "file"));
+            checks.Add(BuildPathValidationResult("modelPath", modelPath, modelPathExists, "directory"));
+
+            var response = Response(serverExeExists && serverConfigExists && cliExeExists && modelPathExists, null);
+            response.Add("checks", checks.ToArray());
+
+            if (!(serverExeExists && serverConfigExists && cliExeExists && modelPathExists))
+            {
+                response["error"] = "One or more runtime paths are missing.";
+            }
+
+            return response;
+        }
+
+        private static Dictionary<string, object> InstallOrUpdateBridge(string installScriptPath, string extensionId)
+        {
+            if (string.IsNullOrWhiteSpace(installScriptPath) || !File.Exists(installScriptPath))
+            {
+                return Response(false, string.Format("Install script not found: {0}", installScriptPath));
+            }
+
+            if (string.IsNullOrWhiteSpace(extensionId))
+            {
+                return Response(false, "Extension ID is required.");
+            }
+
+            var powershellPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.System),
+                @"WindowsPowerShell\v1.0\powershell.exe"
+            );
+            if (!File.Exists(powershellPath))
+            {
+                powershellPath = "powershell.exe";
+            }
+
+            var currentProcessId = Process.GetCurrentProcess().Id;
+            var startInfo = new ProcessStartInfo();
+            startInfo.FileName = powershellPath;
+            startInfo.Arguments = string.Format(
+                "-ExecutionPolicy Bypass -File \"{0}\" -ExtensionId \"{1}\" -WaitForProcessId {2}",
+                installScriptPath,
+                EscapeArgument(extensionId),
+                currentProcessId
+            );
+            startInfo.WorkingDirectory = Path.GetDirectoryName(installScriptPath) ?? Environment.CurrentDirectory;
+            startInfo.UseShellExecute = false;
+            startInfo.CreateNoWindow = true;
+
+            var process = Process.Start(startInfo);
+            var response = Response(true, null);
+            response.Add("launched", process != null);
+            response.Add("updaterPid", process != null ? process.Id : 0);
+            response.Add("nextStep", "Reload the extension after the bridge update finishes.");
+            return response;
         }
 
         private static string EscapeWmiString(string value)

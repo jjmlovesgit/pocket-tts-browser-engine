@@ -1026,6 +1026,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           command: getBridgeInstallCommand(message.extensionId)
         });
         return;
+      case "bridge.installOrUpdate": {
+        const response = await sendNativeCommand({
+          command: "installOrUpdateBridge",
+          installScriptPath: BRIDGE_INSTALL_SCRIPT_PATH,
+          extensionId: message.extensionId || chrome.runtime.id
+        });
+        sendResponse({ ok: true, response });
+        return;
+      }
       case "bridge.ping": {
         const response = await sendNativeCommand({ command: "ping" });
         sendResponse({ ok: true, response });
@@ -1045,6 +1054,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           command: "startServer",
           serverExePath: message.serverExePath || runtimeConfig.serverExePath,
           serverConfigPath: message.serverConfigPath || runtimeConfig.serverConfigPath
+        });
+        sendResponse({ ok: true, response });
+        return;
+      }
+      case "bridge.validateRuntimePaths": {
+        const runtimeConfig = await getRuntimeConfig();
+        const response = await sendNativeCommand({
+          command: "validateRuntimePaths",
+          serverExePath: message.serverExePath || runtimeConfig.serverExePath,
+          serverConfigPath: message.serverConfigPath || runtimeConfig.serverConfigPath,
+          cliExePath: message.cliExePath || runtimeConfig.cliExePath,
+          modelPath: message.modelPath || runtimeConfig.pocketModelPath
         });
         sendResponse({ ok: true, response });
         return;

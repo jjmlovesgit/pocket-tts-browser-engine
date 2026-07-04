@@ -19,6 +19,7 @@ This project has four main parts:
 - Supports popup controls and a full side-panel UI based on `options.html`.
 - Plays speech entirely locally using Pocket TTS through `audio.cpp`.
 - Supports Microsoft Read Aloud style chunked `onSpeak` traffic with queued fallback playback.
+- Supports one-click native bridge self-update from the side panel after the first bridge install.
 
 ## Prerequisites
 
@@ -182,16 +183,27 @@ Load [extension](C:/Projects/pocket-tts-engine/extension) as an unpacked extensi
 
 ### 4. Install the native bridge
 
+First install note:
+
+- the very first native bridge install is still a one-time manual bootstrap
+- after a current bridge is installed, the side panel button can update it automatically
+
 Run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File "C:\Projects\pocket-tts-engine\scripts\install-native-bridge.ps1" -ExtensionId "<your-extension-id>"
 ```
 
-You can also use the extension UI to generate the install command from either:
+You can also use the extension UI by entering either:
 
+- `Install / Update Bridge`
 - a raw extension ID
 - a full `chrome-extension://.../` URL
+
+Behavior:
+
+- if no compatible bridge is installed yet, the button copies the manual bootstrap command
+- once a current bridge is installed, the same button performs a one-click self-update
 
 ### 5. Reload the extension
 
@@ -227,7 +239,7 @@ The side panel uses [options.html](C:/Projects/pocket-tts-engine/extension/optio
 - registry verification for Chrome and Edge
 - voice listing
 - speech testing
-- native bridge install command generation
+- native bridge install/update flow
 - server start via native bridge
 - configurable local server URL
 - configurable server, CLI, config, and model paths
@@ -248,6 +260,8 @@ Why that works:
 
 - the extension is starting the compiled `.exe`, not a Python entry point
 - the native host uses `Process.Start(...)` directly
+
+The startup flow now validates the configured runtime paths before launch and writes the results into the UI log, so missing EXEs, config files, or model directories show up before a launch attempt is made.
 
 Important caveat:
 

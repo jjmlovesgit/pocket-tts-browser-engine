@@ -142,6 +142,43 @@ function getNativeBridgePayload(response) {
   return payload;
 }
 
+function formatRuntimePathLabel(label) {
+  switch (label) {
+    case "serverExePath":
+      return "server exe";
+    case "serverConfigPath":
+      return "server config";
+    case "cliExePath":
+      return "cli exe";
+    case "modelPath":
+      return "model path";
+    default:
+      return label;
+  }
+}
+
+async function validateRuntimePathsForLaunch() {
+  addLog("Validating runtime paths...", "info");
+  const response = await sendBackgroundMessage({ type: "bridge.validateRuntimePaths" });
+  const payload = getNativeBridgePayload(response);
+  const checks = Array.isArray(payload.checks) ? payload.checks : [];
+
+  checks.forEach((check) => {
+    const label = formatRuntimePathLabel(check.label);
+    if (check.exists) {
+      addLog(`OK ${label} found: ${check.path}`, "success");
+      return;
+    }
+
+    addLog(`Missing ${label}: ${check.path}`, "error");
+  });
+
+  if (payload.ok !== true) {
+    addLog("Start aborted because runtime path validation failed", "error");
+    throw new Error(payload.error || "Runtime path validation failed.");
+  }
+}
+
 function getStorageLocal(keys) {
   return new Promise((resolve) => {
     chrome.storage.local.get(keys, resolve);
@@ -1088,6 +1125,25 @@ async function refreshBridgeStatus() {
   }
 }
 
+async function waitForBridgeVersionChange(previousVersion, timeoutMs = 15000) {
+  const startedAt = Date.now();
+  while ((Date.now() - startedAt) < timeoutMs) {
+    await sleep(1000);
+    try {
+      const response = await sendBackgroundMessage({ type: "bridge.ping" });
+      const payload = getNativeBridgePayload(response);
+      const hostVersion = payload.hostVersion || "unknown";
+      if (!previousVersion || hostVersion !== previousVersion) {
+        return hostVersion;
+      }
+    } catch (error) {
+      // Wait for the updater to finish and the host to come back.
+    }
+  }
+
+  return "";
+}
+
 async function verifyBridgeRegistration() {
   try {
     const extensionId = getInstallerExtensionId();
@@ -1217,15 +1273,49 @@ refreshLogBtn.addEventListener("click", () => {
 installBridgeBtn.addEventListener("click", async () => {
   try {
     const extensionId = getInstallerExtensionId();
-    const response = await sendBackgroundMessage({
-      type: "bridge.installCommand",
-      extensionId
-    });
-    await navigator.clipboard.writeText(response.command);
-    addLog("Bridge install command copied to clipboard", "success");
-    addLog(response.command, "info");
+    let previousVersion = "";
+
+    try {
+      const pingResponse = await sendBackgroundMessage({ type: "bridge.ping" });
+      const pingPayload = getNativeBridgePayload(pingResponse);
+      previousVersion = pingPayload.hostVersion || "";
+    } catch (error) {
+      previousVersion = "";
+    }
+
+    try {
+      const response = await sendBackgroundMessage({
+        type: "bridge.installOrUpdate",
+        extensionId
+      });
+      const payload = getNativeBridgePayload(response);
+      addLog(`Bridge update launched${payload.updaterPid ? ` (pid: ${payload.updaterPid})` : ""}`, "success");
+      addLog("Waiting for updated native bridge...", "info");
+      const nextVersion = await waitForBridgeVersionChange(previousVersion);
+      if (nextVersion) {
+        addLog(`Bridge updated to ${nextVersion}`, "success");
+        await refreshBridgeStatus();
+      } else {
+        addLog("Bridge update launched, but version confirmation timed out. Reload the extension after the updater finishes.", "info");
+      }
+      return;
+    } catch (error) {
+      if (!/Unsupported command/i.test(error.message)) {
+        throw error;
+      }
+
+      const response = await sendBackgroundMessage({
+        type: "bridge.installCommand",
+        extensionId
+      });
+      await navigator.clipboard.writeText(response.command);
+      addLog("Installed bridge is too old for one-click self-update.", "info");
+      addLog("Run the copied install command once to bootstrap the newer bridge. After that, this button updates the bridge automatically.", "info");
+      addLog("Bridge install command copied to clipboard", "success");
+      addLog(response.command, "info");
+    }
   } catch (error) {
-    addLog(`Failed to prepare bridge install command: ${error.message}`, "error");
+    addLog(`Bridge install/update failed: ${error.message}`, "error");
   }
 });
 
@@ -1245,6 +1335,7 @@ startServerBtn.addEventListener("click", async () => {
   setLaunchProgress(true, "Launching local server...");
 
   try {
+    await validateRuntimePathsForLaunch();
     const response = await sendBackgroundMessage({
       type: "bridge.startServer"
     });

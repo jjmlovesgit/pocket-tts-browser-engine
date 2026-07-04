@@ -123,6 +123,43 @@ function getNativeBridgePayload(response) {
   return payload;
 }
 
+function formatRuntimePathLabel(label) {
+  switch (label) {
+    case 'serverExePath':
+      return 'server exe';
+    case 'serverConfigPath':
+      return 'server config';
+    case 'cliExePath':
+      return 'cli exe';
+    case 'modelPath':
+      return 'model path';
+    default:
+      return label;
+  }
+}
+
+async function validateRuntimePathsForLaunch() {
+  addLog('Validating runtime paths...', 'info');
+  const response = await sendBackgroundMessage({ type: 'bridge.validateRuntimePaths' });
+  const payload = getNativeBridgePayload(response);
+  const checks = Array.isArray(payload.checks) ? payload.checks : [];
+
+  checks.forEach((check) => {
+    const label = formatRuntimePathLabel(check.label);
+    if (check.exists) {
+      addLog(`OK ${label} found: ${check.path}`, 'success');
+      return;
+    }
+
+    addLog(`Missing ${label}: ${check.path}`, 'error');
+  });
+
+  if (payload.ok !== true) {
+    addLog('Start aborted because runtime path validation failed', 'error');
+    throw new Error(payload.error || 'Runtime path validation failed.');
+  }
+}
+
 function addLog(message, type = 'info') {
   const timestamp = new Date().toLocaleTimeString();
   const prefix = type === 'error' ? '[error]' : type === 'success' ? '[ok]' : '[info]';
@@ -442,6 +479,7 @@ startServerBtn.addEventListener('click', async () => {
   setLaunchProgress(true, 'Launching local Pocket TTS server...');
 
   try {
+    await validateRuntimePathsForLaunch();
     const response = await sendBackgroundMessage({
       type: 'bridge.startServer'
     });

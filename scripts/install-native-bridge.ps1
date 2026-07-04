@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$ExtensionId = "hijmjnmdgkcjlnhoimfnhkgkdaaeeaha",
-    [string]$HostName = "com.pockettts.engine"
+    [string]$HostName = "com.pockettts.engine",
+    [int]$WaitForProcessId = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +14,15 @@ $exePath = Join-Path $installRoot "PocketTtsNativeHost.exe"
 $manifestPath = Join-Path $installRoot "$HostName.json"
 
 New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
+if ($WaitForProcessId -gt 0) {
+    try {
+        $existingProcess = Get-Process -Id $WaitForProcessId -ErrorAction Stop
+        $existingProcess.WaitForExit()
+        Start-Sleep -Milliseconds 250
+    } catch {
+        Start-Sleep -Milliseconds 250
+    }
+}
 if (Test-Path -LiteralPath $exePath) {
     Remove-Item -LiteralPath $exePath -Force
 }
